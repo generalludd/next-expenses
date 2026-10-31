@@ -1,4 +1,5 @@
 import { postgresAdapter } from '@payloadcms/db-postgres'
+import { nodemailerAdapter } from '@payloadcms/email-nodemailer'
 import { lexicalEditor } from '@payloadcms/richtext-lexical'
 import path from 'path'
 import { buildConfig, PayloadRequest } from 'payload'
@@ -34,6 +35,18 @@ export default buildConfig({
     },
   }),
   cors: [process.env.NEXT_PUBLIC_SERVER_URL || ''].filter(Boolean),
+  // Local dev: SMTP_HOST/PORT point at the Mailpit container (see
+  // docker-compose.yml) so emails (e.g. password resets) can be read at
+  // http://localhost:8027 without any real sending.
+  email: nodemailerAdapter({
+    defaultFromAddress: process.env.EMAIL_FROM_ADDRESS || 'noreply@expenses.local',
+    defaultFromName: process.env.EMAIL_FROM_NAME || 'Expenses',
+    transportOptions: {
+      host: process.env.SMTP_HOST || '127.0.0.1',
+      port: Number(process.env.SMTP_PORT) || 1026,
+      secure: false,
+    },
+  }),
   sharp,
   plugins: [],
   jobs: {
