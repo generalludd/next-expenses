@@ -1,7 +1,8 @@
 'use server'
 
-import { cookies } from 'next/headers'
+import { cookies, headers } from 'next/headers'
 import { redirect } from 'next/navigation'
+import { revalidatePath } from 'next/cache'
 import { getPayload } from 'payload'
 
 import config from '@/payload.config'
@@ -70,4 +71,32 @@ export async function logoutAction(): Promise<void> {
   const cookieStore = await cookies()
   cookieStore.delete(`${payload.config.cookiePrefix}-token`)
   redirect('/login')
+}
+
+export async function togglePaymentStatusAction(paymentId: number): Promise<void> {
+  const payload = await getPayload({ config: await config })
+  const requestHeaders = await headers()
+  const { user } = await payload.auth({ headers: requestHeaders })
+
+  if (!user) {
+    redirect('/login')
+  }
+
+  const payment = await payload.findByID({
+    collection: 'payments',
+    id: paymentId,
+    depth: 0,
+    user,
+    overrideAccess: false,
+  })
+
+  await payload.update({
+    collection: 'payments',
+    id: paymentId,
+    data: { paidOn: payment.paidOn ? null : new Date().toISOString() },
+    user,
+    overrideAccess: false,
+  })
+
+  revalidatePath('/')
 }

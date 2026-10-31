@@ -7,7 +7,7 @@ import config from '@/payload.config'
 import { formatMoney } from '@/lib/money'
 import { nextMonth, previousMonth } from '@/lib/months'
 import { getMonthSummary } from '@/lib/monthSummary'
-import { logoutAction } from './actions'
+import { logoutAction, togglePaymentStatusAction } from './actions'
 
 function parseMonthYear(searchParams: { month?: string; year?: string }) {
   const now = new Date()
@@ -152,7 +152,11 @@ export default async function HomePage(props: {
                               <td>{fee.category.name}</td>
                               <td className="amount">{formatMoney(payment.shareCents)}</td>
                               <td>
-                                <span className="status-badge unpaid">Unpaid</span>
+                                <form action={togglePaymentStatusAction.bind(null, payment.id)}>
+                                  <button type="submit" className="status-badge unpaid">
+                                    Unpaid
+                                  </button>
+                                </form>
                               </td>
                             </tr>
                           ))}
@@ -178,7 +182,11 @@ export default async function HomePage(props: {
                               <td>{fee.category.name}</td>
                               <td className="amount">{formatMoney(payment.shareCents)}</td>
                               <td>
-                                <span className="status-badge paid">Paid</span>
+                                <form action={togglePaymentStatusAction.bind(null, payment.id)}>
+                                  <button type="submit" className="status-badge paid">
+                                    Paid
+                                  </button>
+                                </form>
                               </td>
                             </tr>
                           ))}

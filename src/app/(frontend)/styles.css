@@ -291,6 +291,12 @@ body {
   font-weight: 500;
 }
 
+button.status-badge {
+  border: 0;
+  cursor: pointer;
+  font-family: inherit;
+}
+
 .status-badge.unpaid {
   background: #ffebee;
   color: #c62828;
