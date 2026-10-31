@@ -69,15 +69,27 @@ export interface Config {
   collections: {
     users: User;
     media: Media;
+    categories: Category;
+    months: Month;
+    fees: Fee;
+    payments: Payment;
     'payload-kv': PayloadKv;
     'payload-locked-documents': PayloadLockedDocument;
     'payload-preferences': PayloadPreference;
     'payload-migrations': PayloadMigration;
   };
-  collectionsJoins: {};
+  collectionsJoins: {
+    fees: {
+      payments: 'payments';
+    };
+  };
   collectionsSelect: {
     users: UsersSelect<false> | UsersSelect<true>;
     media: MediaSelect<false> | MediaSelect<true>;
+    categories: CategoriesSelect<false> | CategoriesSelect<true>;
+    months: MonthsSelect<false> | MonthsSelect<true>;
+    fees: FeesSelect<false> | FeesSelect<true>;
+    payments: PaymentsSelect<false> | PaymentsSelect<true>;
     'payload-kv': PayloadKvSelect<false> | PayloadKvSelect<true>;
     'payload-locked-documents': PayloadLockedDocumentsSelect<false> | PayloadLockedDocumentsSelect<true>;
     'payload-preferences': PayloadPreferencesSelect<false> | PayloadPreferencesSelect<true>;
@@ -124,6 +136,19 @@ export interface UserAuthOperations {
 export interface User {
   id: number;
   name?: string | null;
+  roles: ('admin' | 'member')[];
+  /**
+   * Login gate only. Does NOT affect who owes a share for a month — see startDate/endDate.
+   */
+  isActive?: boolean | null;
+  /**
+   * Date this person joined the household. Fees for months before this are not split with them.
+   */
+  startDate: string;
+  /**
+   * Date this person left the household, if applicable. Leave blank while still a member.
+   */
+  endDate?: string | null;
   updatedAt: string;
   createdAt: string;
   email: string;
@@ -165,6 +190,75 @@ export interface Media {
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "categories".
+ */
+export interface Category {
+  id: number;
+  name: string;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * Each row represents one calendar month that fees can be billed against.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "months".
+ */
+export interface Month {
+  id: number;
+  /**
+   * Normalized to the 1st of the month automatically.
+   */
+  startsOn: string;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "fees".
+ */
+export interface Fee {
+  id: number;
+  month: number | Month;
+  category: number | Category;
+  /**
+   * Whole cents, e.g. 10000 for $100.00. Stored as an integer to avoid float rounding drift.
+   */
+  amountCents: number;
+  createdBy?: (number | null) | User;
+  payments?: {
+    docs?: (number | Payment)[];
+    hasNextPage?: boolean;
+    totalDocs?: number;
+  };
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "payments".
+ */
+export interface Payment {
+  id: number;
+  fee: number | Fee;
+  user: number | User;
+  /**
+   * Frozen at creation. Changing the fee amount before anyone pays will re-split this; paying locks it in.
+   */
+  shareCents: number;
+  /**
+   * Blank means unpaid.
+   */
+  paidOn?: string | null;
+  /**
+   * Who marked this paid. Set automatically.
+   */
+  recordedBy?: (number | null) | User;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "payload-kv".
  */
 export interface PayloadKv {
@@ -194,6 +288,22 @@ export interface PayloadLockedDocument {
     | ({
         relationTo: 'media';
         value: number | Media;
+      } | null)
+    | ({
+        relationTo: 'categories';
+        value: number | Category;
+      } | null)
+    | ({
+        relationTo: 'months';
+        value: number | Month;
+      } | null)
+    | ({
+        relationTo: 'fees';
+        value: number | Fee;
+      } | null)
+    | ({
+        relationTo: 'payments';
+        value: number | Payment;
       } | null);
   globalSlug?: string | null;
   user: {
@@ -243,6 +353,10 @@ export interface PayloadMigration {
  */
 export interface UsersSelect<T extends boolean = true> {
   name?: T;
+  roles?: T;
+  isActive?: T;
+  startDate?: T;
+  endDate?: T;
   updatedAt?: T;
   createdAt?: T;
   email?: T;
@@ -278,6 +392,50 @@ export interface MediaSelect<T extends boolean = true> {
   height?: T;
   focalX?: T;
   focalY?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "categories_select".
+ */
+export interface CategoriesSelect<T extends boolean = true> {
+  name?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "months_select".
+ */
+export interface MonthsSelect<T extends boolean = true> {
+  startsOn?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "fees_select".
+ */
+export interface FeesSelect<T extends boolean = true> {
+  month?: T;
+  category?: T;
+  amountCents?: T;
+  createdBy?: T;
+  payments?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "payments_select".
+ */
+export interface PaymentsSelect<T extends boolean = true> {
+  fee?: T;
+  user?: T;
+  shareCents?: T;
+  paidOn?: T;
+  recordedBy?: T;
+  updatedAt?: T;
+  createdAt?: T;
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
