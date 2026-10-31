@@ -51,3 +51,15 @@ export function formatMonth(input: Date | string): string {
     timeZone: 'UTC',
   }).format(normalizeToMonthStart(input))
 }
+
+/** { month: 1, year: 2026 } -> { month: 12, year: 2025 }. Date.UTC normalises the month-0 rollunder. */
+export function previousMonth(month: number, year: number): { month: number; year: number } {
+  const d = new Date(Date.UTC(year, month - 1 - 1, 1))
+  return { month: d.getUTCMonth() + 1, year: d.getUTCFullYear() }
+}
+
+/** { month: 12, year: 2025 } -> { month: 1, year: 2026 }. Date.UTC normalises the month-13 rollover. */
+export function nextMonth(month: number, year: number): { month: number; year: number } {
+  const d = new Date(Date.UTC(year, month - 1 + 1, 1))
+  return { month: d.getUTCMonth() + 1, year: d.getUTCFullYear() }
+}

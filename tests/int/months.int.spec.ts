@@ -5,7 +5,9 @@ import {
   monthBounds,
   monthParts,
   monthStartFromParts,
+  nextMonth,
   normalizeToMonthStart,
+  previousMonth,
 } from '@/lib/months'
 import { isActiveForMonth } from '@/lib/activeUsers'
 
@@ -63,6 +65,27 @@ describe('monthParts / monthStartFromParts', () => {
   it('rejects an out-of-range month', () => {
     expect(() => monthStartFromParts(0, 2026)).toThrow()
     expect(() => monthStartFromParts(13, 2026)).toThrow()
+  })
+})
+
+describe('previousMonth / nextMonth', () => {
+  it('rolls January back to December of the previous year', () => {
+    // The legacy bug this guards against: $prev_mo could reach 0.
+    expect(previousMonth(1, 2026)).toEqual({ month: 12, year: 2025 })
+  })
+
+  it('rolls December forward to January of the next year', () => {
+    expect(nextMonth(12, 2025)).toEqual({ month: 1, year: 2026 })
+  })
+
+  it('round-trips for a plain mid-year month', () => {
+    expect(previousMonth(10, 2026)).toEqual({ month: 9, year: 2026 })
+    expect(nextMonth(10, 2026)).toEqual({ month: 11, year: 2026 })
+  })
+
+  it('previousMonth and nextMonth are inverses', () => {
+    const { month, year } = nextMonth(1, 2026)
+    expect(previousMonth(month, year)).toEqual({ month: 1, year: 2026 })
   })
 })
 
