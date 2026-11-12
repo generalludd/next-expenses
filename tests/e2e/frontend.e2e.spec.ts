@@ -212,4 +212,53 @@ test.describe('Frontend', () => {
       await payload.delete({ collection: 'categories', id: category.id })
     }
   })
+
+  // Kept last: it changes the seeded user's password.
+  test('resets a forgotten password via the emailed link', async ({ browser }) => {
+    const freshPage = await (await browser.newContext()).newPage()
+
+    await freshPage.goto('http://localhost:3000/login')
+    await freshPage.click('a:has-text("Forgot your password?")')
+    await expect(freshPage).toHaveURL(/\/forgot-password$/)
+    await freshPage.fill('input[name="email"]', 'nobody@example.invalid')
+    await freshPage.click('button[type="submit"]')
+    await expect(freshPage).toHaveURL(/\/forgot-password\?sent=1$/)
+    await expect(freshPage.locator('.login-notice')).toContainText('If an account exists')
+
+    // Grab a token directly instead of reading it out of Mailpit.
+    const payload = await getPayload({ config: await config })
+    const token = await payload.forgotPassword({
+      collection: 'users',
+      data: { email: frontendTestUser.email },
+      disableEmail: true,
+    })
+    const newPassword = 'frontend-e2e-reset-password'
+
+    await freshPage.goto(`http://localhost:3000/reset-password?token=${token}`)
+    await freshPage.fill('input[name="password"]', newPassword)
+    await freshPage.fill('input[name="confirm"]', 'something-else')
+    await freshPage.click('button[type="submit"]')
+    await expect(freshPage.locator('.login-error')).toHaveText('Passwords do not match.')
+
+    await freshPage.fill('input[name="password"]', newPassword)
+    await freshPage.fill('input[name="confirm"]', newPassword)
+    await freshPage.click('button[type="submit"]')
+    await expect(freshPage).toHaveURL(/\/login\?reset=1$/)
+    await expect(freshPage.locator('.login-notice')).toContainText('Password updated')
+
+    // The token is single-use.
+    await freshPage.goto(`http://localhost:3000/reset-password?token=${token}`)
+    await freshPage.fill('input[name="password"]', newPassword)
+    await freshPage.fill('input[name="confirm"]', newPassword)
+    await freshPage.click('button[type="submit"]')
+    await expect(freshPage.locator('.login-error')).toHaveText(
+      'This reset link is invalid or has expired.',
+    )
+
+    await freshPage.goto('http://localhost:3000/login')
+    await freshPage.fill('input[name="email"]', frontendTestUser.email)
+    await freshPage.fill('input[name="password"]', newPassword)
+    await freshPage.click('button[type="submit"]')
+    await expect(freshPage).toHaveURL('http://localhost:3000/')
+  })
 })

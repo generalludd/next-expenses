@@ -16,7 +16,19 @@ export const Users: CollectionConfig = {
     defaultColumns: ['name', 'email', 'roles', 'isActive'],
     useAsTitle: 'name',
   },
-  auth: true,
+  auth: {
+    forgotPassword: {
+      // Point the emailed link at the frontend reset page rather than
+      // Payload's default /admin/reset/<token>.
+      generateEmailSubject: () => 'Reset your Expenses password',
+      generateEmailHTML: ({ token } = {}) => {
+        const url = `${process.env.NEXT_PUBLIC_SERVER_URL || ''}/reset-password?token=${token}`
+        return `<p>Someone asked to reset your Expenses password.</p>
+<p><a href="${url}">${url}</a></p>
+<p>This link expires in 1 hour. If you didn't ask for this, you can ignore this email.</p>`
+      },
+    },
+  },
   fields: [
     {
       name: 'name',

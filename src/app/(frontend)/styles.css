@@ -388,6 +388,22 @@ button.status-badge {
   text-align: center;
 }
 
+.login-notice {
+  margin: 0;
+  padding: 0.75rem;
+  background: #e8f5e9;
+  color: #2e7d32;
+  border-radius: 4px;
+  font-size: 0.9rem;
+  text-align: center;
+}
+
+.login-form a {
+  color: #0678be;
+  font-size: 0.9rem;
+  text-align: center;
+}
+
 /* Responsive */
 @media (max-width: 768px) {
   .month-nav {

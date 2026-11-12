@@ -6,9 +6,9 @@ import config from '@/payload.config'
 import { loginAction } from '../actions'
 
 export default async function LoginPage(props: {
-  searchParams: Promise<{ error?: string }>
+  searchParams: Promise<{ error?: string; reset?: string }>
 }) {
-  const { error } = await props.searchParams
+  const { error, reset } = await props.searchParams
 
   const payloadConfig = await config
   const payload = await getPayload({ config: payloadConfig })
@@ -23,6 +23,7 @@ export default async function LoginPage(props: {
     <div className="login-page">
       <form className="login-form" action={loginAction}>
         <h1>Expenses</h1>
+        {reset && <p className="login-notice">Password updated. Log in with your new password.</p>}
         {error && <p className="login-error">Incorrect email or password.</p>}
         <label>
           Email
@@ -33,6 +34,7 @@ export default async function LoginPage(props: {
           <input type="password" name="password" autoComplete="current-password" required />
         </label>
         <button type="submit">Log in</button>
+        <a href="/forgot-password">Forgot your password?</a>
       </form>
     </div>
   )

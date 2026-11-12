@@ -2,6 +2,7 @@
 # (see .env's DATABASE_URL), and the app itself runs on the host via
 # `npm run dev` — neither is managed here. This file is only for optional
 # local-dev infra that doesn't belong anywhere else.
+# To start run this, use `docker compose up -d` (or `docker-compose up -d` if you have an older Docker version).
 services:
   mailpit:
     image: axllent/mailpit

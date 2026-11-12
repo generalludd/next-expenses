@@ -59,6 +59,61 @@ export async function loginAction(formData: FormData): Promise<void> {
 }
 
 /**
+ * Always lands on the same "check your email" screen, whether or not the
+ * address belongs to a user, so the form can't be used to probe which
+ * emails are registered. Payload's forgotPassword already returns quietly
+ * for unknown emails; the catch covers anything else (e.g. SMTP down).
+ */
+export async function forgotPasswordAction(formData: FormData): Promise<void> {
+  const email = String(formData.get('email') ?? '')
+
+  const payload = await getPayload({ config: await config })
+
+  try {
+    await payload.forgotPassword({ collection: 'users', data: { email } })
+  } catch (error) {
+    payload.logger.error({ err: error, msg: 'forgotPassword failed' })
+  }
+
+  redirect('/forgot-password?sent=1')
+}
+
+/**
+ * Doesn't log the user in afterwards — they're sent back to /login with a
+ * success notice, which keeps the cookie handling in loginAction only.
+ */
+export async function resetPasswordAction(formData: FormData): Promise<void> {
+  const token = String(formData.get('token') ?? '')
+  const password = String(formData.get('password') ?? '')
+  const confirm = String(formData.get('confirm') ?? '')
+  const tokenParam = encodeURIComponent(token)
+
+  if (password !== confirm) {
+    redirect(`/reset-password?token=${tokenParam}&error=mismatch`)
+  }
+
+  const payload = await getPayload({ config: await config })
+
+  let succeeded = false
+  try {
+    await payload.resetPassword({
+      collection: 'users',
+      data: { token, password },
+      overrideAccess: true,
+    })
+    succeeded = true
+  } catch {
+    // Invalid or expired token. Redirect outside the catch, as in loginAction.
+  }
+
+  if (!succeeded) {
+    redirect(`/reset-password?token=${tokenParam}&error=invalid`)
+  }
+
+  redirect('/login?reset=1')
+}
+
+/**
  * Clears the cookie so the browser stops presenting the token. Doesn't also
  * revoke the session server-side (logoutOperation wants a fully-built
  * PayloadRequest with req.user populated, which isn't worth constructing

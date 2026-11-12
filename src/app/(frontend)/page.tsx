@@ -7,9 +7,15 @@ import config from '@/payload.config'
 import { formatMoney } from '@/lib/money'
 import { nextMonth, previousMonth } from '@/lib/months'
 import { getMonthSummary } from '@/lib/monthSummary'
-import { logoutAction, togglePaymentStatusAction } from './actions'
+import { PaymentLine } from './_components/PaymentLine'
+import { logoutAction } from './actions'
 
-function parseMonthYear(searchParams: { month?: string; year?: string }) {
+/**
+ * Parses the month and year from the search params, defaulting to the current month and year if not provided or invalid.
+ * @param searchParams
+ * @returns
+ */
+function parseMonthYear(searchParams: { month?: string; year?: string }): { month: number; year: number } {
   const now = new Date()
   const defaultMonth = now.getUTCMonth() + 1
   const defaultYear = now.getUTCFullYear()
@@ -147,18 +153,8 @@ export default async function HomePage(props: {
                           </tr>
                         </thead>
                         <tbody>
-                          {userSummary.unpaid.map(({ fee, payment }) => (
-                            <tr key={payment.id}>
-                              <td>{fee.category.name}</td>
-                              <td className="amount">{formatMoney(payment.shareCents)}</td>
-                              <td>
-                                <form action={togglePaymentStatusAction.bind(null, payment.id)}>
-                                  <button type="submit" className="status-badge unpaid">
-                                    Unpaid
-                                  </button>
-                                </form>
-                              </td>
-                            </tr>
+                          {userSummary.unpaid.map((line) => (
+                            <PaymentLine key={line.payment.id} {...line} />
                           ))}
                         </tbody>
                       </table>
@@ -177,18 +173,8 @@ export default async function HomePage(props: {
                           </tr>
                         </thead>
                         <tbody>
-                          {userSummary.paid.map(({ fee, payment }) => (
-                            <tr key={payment.id}>
-                              <td>{fee.category.name}</td>
-                              <td className="amount">{formatMoney(payment.shareCents)}</td>
-                              <td>
-                                <form action={togglePaymentStatusAction.bind(null, payment.id)}>
-                                  <button type="submit" className="status-badge paid">
-                                    Paid
-                                  </button>
-                                </form>
-                              </td>
-                            </tr>
+                          {userSummary.paid.map((line) => (
+                            <PaymentLine key={line.payment.id} {...line} />
                           ))}
                         </tbody>
                       </table>
