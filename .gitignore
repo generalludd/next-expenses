@@ -49,3 +49,5 @@ node_modules/
 /blob-report/
 /playwright/.cache/
 .vscode/
+expenses.dump
+expenses.sql

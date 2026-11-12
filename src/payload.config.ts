@@ -37,14 +37,22 @@ export default buildConfig({
   cors: [process.env.NEXT_PUBLIC_SERVER_URL || ''].filter(Boolean),
   // Local dev: SMTP_HOST/PORT point at the Mailpit container (see
   // docker-compose.yml) so emails (e.g. password resets) can be read at
-  // http://localhost:8027 without any real sending.
+  // http://localhost:8027 without any real sending. Mailpit takes no auth,
+  // so SMTP_USER/SMTP_PASS are only set in production.
+  //
+  // Production runs on a DigitalOcean droplet, which blocks outbound SMTP on
+  // 25, 465 and 587 — use the provider's alternate port (usually 2525,
+  // STARTTLS). `secure` (implicit TLS) is only for port 465.
   email: nodemailerAdapter({
     defaultFromAddress: process.env.EMAIL_FROM_ADDRESS || 'noreply@expenses.local',
     defaultFromName: process.env.EMAIL_FROM_NAME || 'Expenses',
     transportOptions: {
       host: process.env.SMTP_HOST || '127.0.0.1',
       port: Number(process.env.SMTP_PORT) || 1026,
-      secure: false,
+      secure: Number(process.env.SMTP_PORT) === 465,
+      auth: process.env.SMTP_USER
+        ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
+        : undefined,
     },
   }),
   sharp,
