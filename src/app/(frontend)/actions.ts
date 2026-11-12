@@ -6,6 +6,9 @@ import { revalidatePath } from 'next/cache'
 import { getPayload } from 'payload'
 
 import config from '@/payload.config'
+import { toCents } from '@/lib/money'
+import { monthStartFromParts } from '@/lib/months'
+import { skippedCategoryIdsOf } from '@/lib/monthSummary'
 
 /**
  * Logs in via the Local API and sets Payload's own session cookie by hand.
@@ -152,6 +155,142 @@ export async function togglePaymentStatusAction(paymentId: number): Promise<void
     user,
     overrideAccess: false,
   })
+
+  revalidatePath('/')
+}
+
+/**
+ * Months' create access is adminOnly, and overrideAccess: false keeps that
+ * enforced here even though the button is only rendered for admins.
+ */
+export async function createMonthAction(month: number, year: number): Promise<void> {
+  const payload = await getPayload({ config: await config })
+  const requestHeaders = await headers()
+  const { user } = await payload.auth({ headers: requestHeaders })
+
+  if (!user) {
+    redirect('/login')
+  }
+
+  try {
+    await payload.create({
+      collection: 'months',
+      data: { startsOn: monthStartFromParts(month, year).toISOString() },
+      user,
+      overrideAccess: false,
+    })
+  } catch (error) {
+    // A double click trips the unique index on startsOn; the month exists
+    // either way, so only re-throw if it's genuinely missing.
+    const { totalDocs } = await payload.count({
+      collection: 'months',
+      where: { startsOn: { equals: monthStartFromParts(month, year).toISOString() } },
+    })
+    if (totalDocs === 0) throw error
+  }
+
+  revalidatePath('/')
+}
+
+/**
+ * Adds one fee to `monthId` for `categoryId`, using the (possibly edited)
+ * amount from the copy panel. Creating the fee fires fanOutPayments, which
+ * creates every active user's payment, so the re-render picks those up.
+ */
+export async function copyFeeAction(
+  monthId: number,
+  categoryId: number,
+  formData: FormData,
+): Promise<void> {
+  const payload = await getPayload({ config: await config })
+  const requestHeaders = await headers()
+  const { user } = await payload.auth({ headers: requestHeaders })
+
+  if (!user) {
+    redirect('/login')
+  }
+
+  let amountCents: number
+  try {
+    amountCents = toCents(String(formData.get('amount') ?? ''))
+  } catch {
+    return
+  }
+  if (amountCents < 0) return
+
+  // There's no unique constraint on (month, category), so guard against a
+  // double submit creating the same fee twice.
+  const { totalDocs } = await payload.count({
+    collection: 'fees',
+    where: { and: [{ month: { equals: monthId } }, { category: { equals: categoryId } }] },
+  })
+  if (totalDocs === 0) {
+    await payload.create({
+      collection: 'fees',
+      data: { month: monthId, category: categoryId, amountCents },
+      user,
+      overrideAccess: false,
+    })
+  }
+
+  revalidatePath('/')
+}
+
+/**
+ * Skips (or un-skips) a previous-month category on the copy panel by
+ * recording it on the month's skippedCategories. overrideAccess: true
+ * because Months' update access is adminOnly, but skipping is part of the
+ * same copy workflow any logged-in user can do with copyFeeAction — and it
+ * only ever touches this one field.
+ */
+export async function setCategorySkippedAction(
+  monthId: number,
+  categoryId: number,
+  skipped: boolean,
+): Promise<void> {
+  const payload = await getPayload({ config: await config })
+  const requestHeaders = await headers()
+  const { user } = await payload.auth({ headers: requestHeaders })
+
+  if (!user) {
+    redirect('/login')
+  }
+
+  const month = await payload.findByID({ collection: 'months', id: monthId, depth: 0 })
+  const current = skippedCategoryIdsOf(month).filter((id) => id !== categoryId)
+
+  await payload.update({
+    collection: 'months',
+    id: monthId,
+    data: { skippedCategories: skipped ? [...current, categoryId] : current },
+    overrideAccess: true,
+  })
+
+  revalidatePath('/')
+}
+
+/**
+ * Deletes a fee entered by mistake. cascadeDeletePayments removes its
+ * payments too, so — matching guardAmountEdit — refuse if any are already
+ * marked paid, rather than silently erase settled history. The dashboard
+ * hides the button in that case; this is the server-side backstop.
+ */
+export async function deleteFeeAction(feeId: number): Promise<void> {
+  const payload = await getPayload({ config: await config })
+  const requestHeaders = await headers()
+  const { user } = await payload.auth({ headers: requestHeaders })
+
+  if (!user) {
+    redirect('/login')
+  }
+
+  const { totalDocs: paidCount } = await payload.count({
+    collection: 'payments',
+    where: { and: [{ fee: { equals: feeId } }, { paidOn: { exists: true } }] },
+  })
+  if (paidCount > 0) return
+
+  await payload.delete({ collection: 'fees', id: feeId, user, overrideAccess: false })
 
   revalidatePath('/')
 }

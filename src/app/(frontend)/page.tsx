@@ -4,18 +4,24 @@ import { redirect } from 'next/navigation'
 import { getPayload } from 'payload'
 
 import config from '@/payload.config'
+import { isAdmin } from '@/access/adminOnly'
 import { formatMoney } from '@/lib/money'
 import { nextMonth, previousMonth } from '@/lib/months'
-import { getMonthSummary } from '@/lib/monthSummary'
+import { getCopyCandidates, getMonthSummary } from '@/lib/monthSummary'
+import { CopyFeeRow } from './_components/CopyFeeRow'
+import { DeleteFeeButton } from './_components/DeleteFeeButton'
 import { PaymentLine } from './_components/PaymentLine'
-import { logoutAction } from './actions'
+import { createMonthAction, logoutAction, setCategorySkippedAction } from './actions'
 
 /**
  * Parses the month and year from the search params, defaulting to the current month and year if not provided or invalid.
  * @param searchParams
  * @returns
  */
-function parseMonthYear(searchParams: { month?: string; year?: string }): { month: number; year: number } {
+function parseMonthYear(searchParams: { month?: string; year?: string }): {
+  month: number
+  year: number
+} {
   const now = new Date()
   const defaultMonth = now.getUTCMonth() + 1
   const defaultYear = now.getUTCFullYear()
@@ -46,6 +52,13 @@ export default async function HomePage(props: {
   const summary = await getMonthSummary(payload, month, year)
   const prev = previousMonth(month, year)
   const next = nextMonth(month, year)
+  const copyCandidates = summary.monthDoc
+    ? await getCopyCandidates(payload, summary.monthDoc, month, year, summary.fees)
+    : null
+  // Fees with any paid share can't be deleted (see deleteFeeAction).
+  const feeIdsWithPaidShares = new Set(
+    summary.users.flatMap((userSummary) => userSummary.paid.map((line) => line.fee.id)),
+  )
 
   return (
     <div className="app">
@@ -78,7 +91,16 @@ export default async function HomePage(props: {
           </div>
 
           {!summary.monthDoc ? (
-            <p className="empty-state">No fees recorded for {summary.monthLabel} yet.</p>
+            <div className="empty-state">
+              <p>No fees recorded for {summary.monthLabel} yet.</p>
+              {isAdmin(user) && (
+                <form action={createMonthAction.bind(null, month, year)}>
+                  <button type="submit" className="btn-primary">
+                    Create {summary.monthLabel}
+                  </button>
+                </form>
+              )}
+            </div>
           ) : (
             <>
               <div className="month-summary">
@@ -92,6 +114,50 @@ export default async function HomePage(props: {
                 </div>
               </div>
 
+              {copyCandidates &&
+                (copyCandidates.fees.length > 0 || copyCandidates.skipped.length > 0) && (
+                  <div className="fees-section copy-section">
+                    <h2>Copy from {copyCandidates.prevLabel}</h2>
+                    {copyCandidates.fees.length > 0 && (
+                      <table className="data-table">
+                        <thead>
+                          <tr>
+                            <th>Category</th>
+                            <th className="amount">Last Month</th>
+                            <th>Amount for {summary.monthLabel}</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {copyCandidates.fees.map((fee) => (
+                            <CopyFeeRow key={fee.id} fee={fee} monthId={summary.monthDoc!.id} />
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                    {copyCandidates.skipped.length > 0 && (
+                      <ul className="skipped-list">
+                        {copyCandidates.skipped.map((fee) => (
+                          <li key={fee.id}>
+                            <span>Skipped: {fee.category.name}</span>
+                            <form
+                              action={setCategorySkippedAction.bind(
+                                null,
+                                summary.monthDoc!.id,
+                                fee.category.id,
+                                false,
+                              )}
+                            >
+                              <button type="submit" className="btn-text">
+                                Undo
+                              </button>
+                            </form>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                )}
+
               {summary.fees.length > 0 && (
                 <div className="fees-section">
                   <h2>Fees for {summary.monthLabel}</h2>
@@ -100,6 +166,7 @@ export default async function HomePage(props: {
                       <tr>
                         <th>Category</th>
                         <th className="amount">Total Amount</th>
+                        <th></th>
                       </tr>
                     </thead>
                     <tbody>
@@ -109,6 +176,18 @@ export default async function HomePage(props: {
                             <strong>{fee.category.name}</strong>
                           </td>
                           <td className="amount">{formatMoney(fee.amountCents)}</td>
+                          <td className="row-actions">
+                            {feeIdsWithPaidShares.has(fee.id) ? (
+                              <span
+                                className="muted"
+                                title="Mark its payments unpaid before deleting this fee."
+                              >
+                                Has payments
+                              </span>
+                            ) : (
+                              <DeleteFeeButton feeId={fee.id} categoryName={fee.category.name} />
+                            )}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -120,6 +199,7 @@ export default async function HomePage(props: {
                         <td className="amount">
                           <strong>{formatMoney(summary.totalFeeCents)}</strong>
                         </td>
+                        <td></td>
                       </tr>
                     </tfoot>
                   </table>

@@ -35,6 +35,16 @@ export const Months: CollectionConfig = {
         description: 'Normalized to the 1st of the month automatically.',
       },
     },
+    {
+      name: 'skippedCategories',
+      type: 'relationship',
+      relationTo: 'categories',
+      hasMany: true,
+      admin: {
+        description:
+          "Categories from the previous month that were skipped on the dashboard's copy panel, so they stop being offered for this month.",
+      },
+    },
   ],
   timestamps: true,
 }

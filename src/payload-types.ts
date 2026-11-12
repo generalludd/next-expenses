@@ -210,6 +210,10 @@ export interface Month {
    * Normalized to the 1st of the month automatically.
    */
   startsOn: string;
+  /**
+   * Categories from the previous month that were skipped on the dashboard's copy panel, so they stop being offered for this month.
+   */
+  skippedCategories?: (number | Category)[] | null;
   updatedAt: string;
   createdAt: string;
 }
@@ -408,6 +412,7 @@ export interface CategoriesSelect<T extends boolean = true> {
  */
 export interface MonthsSelect<T extends boolean = true> {
   startsOn?: T;
+  skippedCategories?: T;
   updatedAt?: T;
   createdAt?: T;
 }

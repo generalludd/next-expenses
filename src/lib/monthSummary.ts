@@ -1,7 +1,7 @@
 import type { Payload } from 'payload'
 
 import type { Category, Fee, Month, Payment, User } from '@/payload-types'
-import { formatMonth, monthStartFromParts } from './months'
+import { formatMonth, monthStartFromParts, previousMonth } from './months'
 
 /**
  * Data layer for the month dashboard. The equivalent of the old Svelte
@@ -110,4 +110,67 @@ export async function getMonthSummary(
   const users = Array.from(byUser.values()).sort((a, b) => a.user.id - b.user.id)
 
   return { month, year, monthLabel, monthDoc, fees: populatedFees, totalFeeCents, users }
+}
+
+export type CopyCandidates = {
+  prevLabel: string
+  /** The previous month's fees whose category isn't billed or skipped in this month yet. */
+  fees: PopulatedFee[]
+  /** The previous month's fees whose category was skipped for this month. */
+  skipped: PopulatedFee[]
+}
+
+/**
+ * What the "Copy from previous month" panel offers: last month's fees, minus
+ * any category already present this month. Copying is per category, not per
+ * fee, so once a category has been added here it drops out of the list.
+ * Categories in the month's `skippedCategories` are split out so the panel
+ * can offer to undo the skip.
+ */
+export async function getCopyCandidates(
+  payload: Payload,
+  monthDoc: Month,
+  month: number,
+  year: number,
+  currentFees: PopulatedFee[],
+): Promise<CopyCandidates> {
+  const prev = previousMonth(month, year)
+  const prevStartIso = monthStartFromParts(prev.month, prev.year).toISOString()
+  const prevLabel = formatMonth(prevStartIso)
+
+  const { docs: prevMonthDocs } = await payload.find({
+    collection: 'months',
+    where: { startsOn: { equals: prevStartIso } },
+    limit: 1,
+    depth: 0,
+  })
+  const prevMonthDoc = prevMonthDocs[0]
+  if (!prevMonthDoc) return { prevLabel, fees: [], skipped: [] }
+
+  const { docs: prevFees } = await payload.find({
+    collection: 'fees',
+    where: { month: { equals: prevMonthDoc.id } },
+    sort: 'id',
+    limit: 0,
+    depth: 1, // populates category and month
+  })
+
+  const billedCategoryIds = new Set(currentFees.map((fee) => fee.category.id))
+  const skippedCategoryIds = new Set(skippedCategoryIdsOf(monthDoc))
+  const unbilled = (prevFees as PopulatedFee[]).filter(
+    (fee) => !billedCategoryIds.has(fee.category.id),
+  )
+
+  return {
+    prevLabel,
+    fees: unbilled.filter((fee) => !skippedCategoryIds.has(fee.category.id)),
+    skipped: unbilled.filter((fee) => skippedCategoryIds.has(fee.category.id)),
+  }
+}
+
+/** A month's skippedCategories as ids, whatever depth it was fetched at. */
+export function skippedCategoryIdsOf(monthDoc: Month): number[] {
+  return (monthDoc.skippedCategories ?? []).map((category) =>
+    typeof category === 'object' ? category.id : category,
+  )
 }

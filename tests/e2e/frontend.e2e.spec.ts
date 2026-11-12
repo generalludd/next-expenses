@@ -38,6 +38,41 @@ async function cleanupFrontendToggleFixtures() {
   }
 }
 
+const copyCategoryName = '__test__ Frontend Copy'
+const skipCategoryName = '__test__ Frontend Skip'
+const copyMonthStarts = ['2099-10-01T00:00:00.000Z', '2099-11-01T00:00:00.000Z']
+
+async function cleanupCopyMonthFixtures() {
+  const payload = await getPayload({ config: await config })
+  const { docs: categories } = await payload.find({
+    collection: 'categories',
+    where: { name: { in: [copyCategoryName, skipCategoryName] } },
+    limit: 0,
+    depth: 0,
+  })
+  for (const category of categories) {
+    const { docs: fees } = await payload.find({
+      collection: 'fees',
+      where: { category: { equals: category.id } },
+      limit: 0,
+      depth: 0,
+    })
+    for (const fee of fees) {
+      await payload.delete({ collection: 'fees', id: fee.id })
+    }
+    await payload.delete({ collection: 'categories', id: category.id })
+  }
+  const { docs: months } = await payload.find({
+    collection: 'months',
+    where: { startsOn: { in: copyMonthStarts } },
+    limit: 0,
+    depth: 0,
+  })
+  for (const month of months) {
+    await payload.delete({ collection: 'months', id: month.id })
+  }
+}
+
 async function seedFrontendTestUser() {
   await cleanupFrontendToggleFixtures()
   const payload = await getPayload({ config: await config })
@@ -55,7 +90,8 @@ async function seedFrontendTestUser() {
     data: {
       email: frontendTestUser.email,
       password: frontendTestUser.password,
-      roles: ['member'],
+      // Admin so the copy-month test can see the Create month button.
+      roles: ['admin', 'member'],
       startDate: '2020-01-01',
       endDate: null,
     },
@@ -210,6 +246,83 @@ test.describe('Frontend', () => {
       }
       await payload.delete({ collection: 'months', id: month.id })
       await payload.delete({ collection: 'categories', id: category.id })
+    }
+  })
+
+  test('creates a month, copies, skips, and deletes fees', async ({ browser }) => {
+    await cleanupCopyMonthFixtures()
+    const payload = await getPayload({ config: await config })
+
+    try {
+      const october = await payload.create({
+        collection: 'months',
+        data: { startsOn: copyMonthStarts[0] },
+      })
+      const category = await payload.create({
+        collection: 'categories',
+        data: { name: copyCategoryName },
+      })
+      await payload.create({
+        collection: 'fees',
+        data: { month: october.id, category: category.id, amountCents: 12000 },
+      })
+      const skipCategory = await payload.create({
+        collection: 'categories',
+        data: { name: skipCategoryName },
+      })
+      await payload.create({
+        collection: 'fees',
+        data: { month: october.id, category: skipCategory.id, amountCents: 3000 },
+      })
+
+      const freshPage = await (await browser.newContext()).newPage()
+      await freshPage.goto('http://localhost:3000/login')
+      await freshPage.fill('input[name="email"]', frontendTestUser.email)
+      await freshPage.fill('input[name="password"]', frontendTestUser.password)
+      await freshPage.click('button[type="submit"]')
+      await expect(freshPage).toHaveURL('http://localhost:3000/')
+
+      await freshPage.goto('http://localhost:3000/?month=11&year=2099')
+      await freshPage.click('button:has-text("Create November 2099")')
+
+      const copySection = freshPage.locator('.copy-section')
+      await expect(copySection.locator('h2')).toHaveText('Copy from October 2099')
+      const copyRow = copySection.locator('tr').filter({ hasText: copyCategoryName })
+      await expect(copyRow.locator('input[name="amount"]')).toHaveValue('120.00')
+
+      await copyRow.locator('input[name="amount"]').fill('150.50')
+      await copyRow.getByRole('button', { name: 'Add' }).click()
+
+      const feeRow = freshPage.locator('.fees-table tr').filter({ hasText: copyCategoryName })
+      await expect(feeRow).toContainText('$150.50')
+      await expect(copySection.locator('tr').filter({ hasText: copyCategoryName })).toHaveCount(0)
+
+      const userSection = freshPage
+        .locator('.user-section')
+        .filter({ hasText: frontendTestUser.email })
+      await expect(
+        userSection.locator('.data-table.unpaid tr').filter({ hasText: copyCategoryName }),
+      ).toBeVisible()
+
+      // Skip removes a category from the copy panel; Undo brings it back.
+      const skipRow = () => copySection.locator('tr').filter({ hasText: skipCategoryName })
+      await skipRow().getByRole('button', { name: 'Skip' }).click()
+      await expect(skipRow()).toHaveCount(0)
+      const skippedItem = copySection
+        .locator('.skipped-list li')
+        .filter({ hasText: skipCategoryName })
+      await expect(skippedItem).toBeVisible()
+      await skippedItem.getByRole('button', { name: 'Undo' }).click()
+      await expect(skipRow()).toBeVisible()
+      await expect(skippedItem).toHaveCount(0)
+
+      // Deleting the copied fee removes it and puts it back on the copy panel.
+      freshPage.once('dialog', (dialog) => dialog.accept())
+      await feeRow.getByRole('button', { name: 'Delete' }).click()
+      await expect(feeRow).toHaveCount(0)
+      await expect(copySection.locator('tr').filter({ hasText: copyCategoryName })).toBeVisible()
+    } finally {
+      await cleanupCopyMonthFixtures()
     }
   })
 

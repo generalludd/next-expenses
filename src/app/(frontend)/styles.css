@@ -119,6 +119,107 @@ body {
   background: #055a94;
 }
 
+.btn-primary {
+  padding: 0.5rem 1rem;
+  background: #0678be;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  font-size: 1rem;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.btn-primary:hover {
+  background: #055a94;
+}
+
+.btn-secondary {
+  padding: 0.5rem 1rem;
+  background: white;
+  color: #555;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 1rem;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.btn-secondary:hover {
+  background: #f5f5f5;
+}
+
+.btn-danger {
+  padding: 0.3rem 0.75rem;
+  background: white;
+  color: #c62828;
+  border: 1px solid #ef9a9a;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.btn-danger:hover {
+  background: #ffebee;
+}
+
+.btn-text {
+  padding: 0;
+  background: none;
+  border: none;
+  color: #0678be;
+  font-size: 0.9rem;
+  font-family: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.row-actions {
+  text-align: right;
+  width: 1%;
+  white-space: nowrap;
+}
+
+.muted {
+  color: #888;
+  font-size: 0.85rem;
+}
+
+/* Copy from previous month */
+.copy-fee-form {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.skipped-list {
+  list-style: none;
+  margin: 1rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  color: #666;
+  font-size: 0.9rem;
+}
+
+.skipped-list li {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.copy-fee-form input {
+  width: 8rem;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 1rem;
+  text-align: right;
+}
+
 /* Month Summary */
 .month-summary {
   display: grid;
