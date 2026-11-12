@@ -1,16 +1,31 @@
+import { APIError } from 'payload'
 import type { CollectionConfig } from 'payload'
 
 import { authenticated } from '../access/authenticated'
-import { adminOnlyField } from '../access/adminOnly'
+import { adminOnly, adminOnlyField, adminOrOwn, isAdmin } from '../access/adminOnly'
 
 export const Users: CollectionConfig = {
   slug: 'users',
+  // Admins manage everyone; members can only edit their own name, email and
+  // password (the membership fields below are admin-only at field level).
   access: {
-    admin: authenticated,
-    create: authenticated,
-    delete: authenticated,
+    // Who can open /admin at all.
+    admin: ({ req: { user } }) => isAdmin(user),
+    create: adminOnly,
+    delete: adminOnly,
     read: authenticated,
-    update: authenticated,
+    update: adminOrOwn('id'),
+  },
+  hooks: {
+    // Enforces isActive as the login gate it's documented to be. Runs after
+    // the password check, for both /login and /admin login.
+    beforeLogin: [
+      ({ user }) => {
+        if (user.isActive === false) {
+          throw new APIError('This account has been disabled.', 401)
+        }
+      },
+    ],
   },
   admin: {
     defaultColumns: ['name', 'email', 'roles', 'isActive'],
@@ -52,25 +67,31 @@ export const Users: CollectionConfig = {
       name: 'isActive',
       type: 'checkbox',
       defaultValue: true,
+      access: { update: adminOnlyField },
       admin: {
-        description: 'Login gate only. Does NOT affect who owes a share for a month — see startDate/endDate.',
+        description:
+          'Login gate only. Does NOT affect who owes a share for a month — see startDate/endDate.',
       },
     },
     {
       name: 'startDate',
       type: 'date',
       required: true,
+      access: { update: adminOnlyField },
       admin: {
         date: { pickerAppearance: 'dayOnly' },
-        description: 'Date this person joined the household. Fees for months before this are not split with them.',
+        description:
+          'Date this person joined the household. Fees for months before this are not split with them.',
       },
     },
     {
       name: 'endDate',
       type: 'date',
+      access: { update: adminOnlyField },
       admin: {
         date: { pickerAppearance: 'dayOnly' },
-        description: 'Date this person left the household, if applicable. Leave blank while still a member.',
+        description:
+          'Date this person left the household, if applicable. Leave blank while still a member.',
       },
     },
   ],

@@ -1,4 +1,4 @@
-import { test, expect, Page } from '@playwright/test'
+import { test, expect, Browser, Page } from '@playwright/test'
 import { getPayload } from 'payload'
 import config from '../../src/payload.config'
 
@@ -75,6 +75,57 @@ async function cleanupCopyMonthFixtures() {
   for (const month of months) {
     await payload.delete({ collection: 'months', id: month.id })
   }
+}
+
+const rolesCategoryName = '__test__ Frontend Roles'
+const rolesMonthStart = '2098-07-01T00:00:00.000Z'
+const memberUser = {
+  email: '__test__frontend-member@example.invalid',
+  password: 'frontend-member-password',
+}
+const addedUserEmail = '__test__frontend-added@example.invalid'
+
+async function cleanupRolesFixtures() {
+  const payload = await getPayload({ config: await config })
+  const { docs: categories } = await payload.find({
+    collection: 'categories',
+    where: { name: { equals: rolesCategoryName } },
+    limit: 0,
+    depth: 0,
+  })
+  for (const category of categories) {
+    const { docs: fees } = await payload.find({
+      collection: 'fees',
+      where: { category: { equals: category.id } },
+      limit: 0,
+      depth: 0,
+    })
+    for (const fee of fees) await payload.delete({ collection: 'fees', id: fee.id })
+    await payload.delete({ collection: 'categories', id: category.id })
+  }
+  const { docs: months } = await payload.find({
+    collection: 'months',
+    where: { startsOn: { equals: rolesMonthStart } },
+    limit: 0,
+    depth: 0,
+  })
+  for (const month of months) await payload.delete({ collection: 'months', id: month.id })
+  const { docs: users } = await payload.find({
+    collection: 'users',
+    where: { email: { in: [memberUser.email, addedUserEmail] } },
+    limit: 0,
+    depth: 0,
+  })
+  for (const user of users) await payload.delete({ collection: 'users', id: user.id })
+}
+
+async function loginAs(browser: Browser, user: { email: string; password: string }) {
+  const freshPage = await (await browser.newContext()).newPage()
+  await freshPage.goto('http://localhost:3000/login')
+  await freshPage.fill('input[name="email"]', user.email)
+  await freshPage.fill('input[name="password"]', user.password)
+  await freshPage.click('button[type="submit"]')
+  return freshPage
 }
 
 async function seedFrontendTestUser() {
@@ -379,6 +430,141 @@ test.describe('Frontend', () => {
       await expect(feeRow).toContainText('$55.00')
     } finally {
       await cleanupCopyMonthFixtures()
+    }
+  })
+
+  test('a member sees the month but can only mark their own payments', async ({ browser }) => {
+    await cleanupRolesFixtures()
+    const payload = await getPayload({ config: await config })
+
+    try {
+      await payload.create({
+        collection: 'users',
+        data: { ...memberUser, roles: ['member'], startDate: '2020-01-01', endDate: null },
+      })
+      const month = await payload.create({
+        collection: 'months',
+        data: { startsOn: rolesMonthStart },
+      })
+      const category = await payload.create({
+        collection: 'categories',
+        data: { name: rolesCategoryName },
+      })
+      await payload.create({
+        collection: 'fees',
+        data: { month: month.id, category: category.id, amountCents: 6000 },
+      })
+
+      const memberPage = await loginAs(browser, memberUser)
+      await expect(memberPage).toHaveURL('http://localhost:3000/')
+      await expect(memberPage.getByRole('link', { name: 'Users' })).toHaveCount(0)
+
+      await memberPage.goto('http://localhost:3000/?month=7&year=2098')
+      await expect(memberPage.locator('.fees-table')).toContainText(rolesCategoryName)
+      await expect(memberPage.getByRole('button', { name: '+ Add fee' })).toHaveCount(0)
+      await expect(memberPage.locator('.fees-table').getByRole('button')).toHaveCount(0)
+      await expect(memberPage.locator('.copy-section')).toHaveCount(0)
+
+      // Own payment: a toggle button. Someone else's: a plain badge.
+      const ownRow = memberPage
+        .locator('.user-section')
+        .filter({ hasText: memberUser.email })
+        .locator('tr')
+        .filter({ hasText: rolesCategoryName })
+      const otherRow = memberPage
+        .locator('.user-section')
+        .filter({ hasText: frontendTestUser.email })
+        .locator('tr')
+        .filter({ hasText: rolesCategoryName })
+      await expect(otherRow.locator('span.status-badge')).toHaveText('Unpaid')
+      await expect(otherRow.getByRole('button')).toHaveCount(0)
+      await ownRow.getByRole('button', { name: 'Unpaid' }).click()
+      await expect(ownRow.getByRole('button', { name: 'Paid' })).toBeVisible()
+
+      // /users is admin-only.
+      await memberPage.goto('http://localhost:3000/users')
+      await expect(memberPage).toHaveURL('http://localhost:3000/')
+    } finally {
+      await cleanupRolesFixtures()
+    }
+  })
+
+  test('an admin adds a user, who gets a welcome email, then edits them', async ({ browser }) => {
+    await cleanupRolesFixtures()
+    const payload = await getPayload({ config: await config })
+
+    try {
+      const adminPage = await loginAs(browser, frontendTestUser)
+      await expect(adminPage).toHaveURL('http://localhost:3000/')
+      await adminPage.getByRole('link', { name: 'Users' }).click()
+      await expect(adminPage).toHaveURL(/\/users$/)
+
+      await adminPage.getByRole('button', { name: '+ Add user' }).click()
+      const addDialog = adminPage.getByRole('dialog', { name: 'Add user' })
+      await addDialog.locator('input[name="name"]').fill('Added Person')
+      await addDialog.locator('input[name="email"]').fill(addedUserEmail)
+      await addDialog.locator('input[name="startDate"]').fill('2026-01-01')
+      await addDialog.getByRole('button', { name: 'Save' }).click()
+      await expect(addDialog).toBeHidden()
+
+      const row = adminPage.locator('.users-table tbody tr').filter({ hasText: addedUserEmail })
+      await expect(row).toContainText('Added Person')
+      await expect(row).toContainText('Member')
+      await expect(row).toContainText('Enabled')
+
+      // The welcome email lands in Mailpit (must be running: docker compose up -d mailpit).
+      await expect
+        .poll(async () => {
+          const response = await fetch(
+            `http://localhost:8027/api/v1/search?query=${encodeURIComponent(`to:${addedUserEmail}`)}`,
+          )
+          const body = (await response.json()) as { messages: { Subject: string }[] }
+          return body.messages.map((message) => message.Subject)
+        })
+        .toContain('You’ve been added to Expenses')
+
+      // Make them an admin and disable their login.
+      await row.getByRole('button', { name: 'Edit' }).click()
+      const editDialog = adminPage.getByRole('dialog', { name: 'Edit user' })
+      await editDialog.locator('input[name="admin"]').check()
+      await editDialog.locator('input[name="isActive"]').uncheck()
+      await editDialog.getByRole('button', { name: 'Save' }).click()
+      await expect(editDialog).toBeHidden()
+      await expect(row).toContainText('Admin')
+      await expect(row).toContainText('Disabled')
+
+      // A disabled user can't log in, even with the right password.
+      const { docs } = await payload.find({
+        collection: 'users',
+        where: { email: { equals: addedUserEmail } },
+        limit: 1,
+        depth: 0,
+      })
+      const addedPassword = 'added-user-password'
+      await payload.update({
+        collection: 'users',
+        id: docs[0].id,
+        data: { password: addedPassword },
+      })
+      const blockedPage = await loginAs(browser, { email: addedUserEmail, password: addedPassword })
+      await expect(blockedPage).toHaveURL(/\/login\?error=1$/)
+
+      // Re-enabled, they can.
+      await payload.update({ collection: 'users', id: docs[0].id, data: { isActive: true } })
+      const allowedPage = await loginAs(browser, { email: addedUserEmail, password: addedPassword })
+      await expect(allowedPage).toHaveURL('http://localhost:3000/')
+      await expect(allowedPage.getByRole('link', { name: 'Users' })).toBeVisible()
+
+      // Admins can't lock themselves out.
+      const selfRow = adminPage
+        .locator('.users-table tbody tr')
+        .filter({ hasText: frontendTestUser.email })
+      await selfRow.getByRole('button', { name: 'Edit' }).click()
+      const selfDialog = adminPage.getByRole('dialog', { name: 'Edit user' })
+      await expect(selfDialog.locator('input[name="admin"][type="checkbox"]')).toBeDisabled()
+      await expect(selfDialog.locator('input[name="isActive"][type="checkbox"]')).toBeDisabled()
+    } finally {
+      await cleanupRolesFixtures()
     }
   })
 

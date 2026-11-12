@@ -1,7 +1,7 @@
 import type { CollectionConfig } from 'payload'
 
 import { authenticated } from '../../access/authenticated'
-import { adminOnly } from '../../access/adminOnly'
+import { adminOnly, adminOnlyField, adminOrOwn } from '../../access/adminOnly'
 import { setRecordedBy } from './hooks/setRecordedBy'
 
 export const Payments: CollectionConfig = {
@@ -12,8 +12,10 @@ export const Payments: CollectionConfig = {
     // Local API with default overrideAccess and so isn't subject to this.
     // Direct creation is an admin escape hatch for corrections.
     create: adminOnly,
-    // Any authenticated user can mark a payment paid.
-    update: authenticated,
+    // Members can mark their own payments paid/unpaid; admins anyone's. The
+    // fee/user/share fields are admin-only below, so on their own payments
+    // members can only change paidOn.
+    update: adminOrOwn('user'),
     delete: adminOnly,
   },
   admin: {
@@ -29,19 +31,23 @@ export const Payments: CollectionConfig = {
       type: 'relationship',
       relationTo: 'fees',
       required: true,
+      access: { update: adminOnlyField },
     },
     {
       name: 'user',
       type: 'relationship',
       relationTo: 'users',
       required: true,
+      access: { update: adminOnlyField },
     },
     {
       name: 'shareCents',
       type: 'number',
       required: true,
+      access: { update: adminOnlyField },
       admin: {
-        description: 'Frozen at creation. Changing the fee amount before anyone pays will re-split this; paying locks it in.',
+        description:
+          'Frozen at creation. Changing the fee amount before anyone pays will re-split this; paying locks it in.',
       },
     },
     {

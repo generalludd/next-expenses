@@ -3,12 +3,13 @@
 import { cookies, headers } from 'next/headers'
 import { redirect } from 'next/navigation'
 import { revalidatePath } from 'next/cache'
+import { randomBytes } from 'crypto'
 import { getPayload } from 'payload'
 
 import config from '@/payload.config'
 import { toCents } from '@/lib/money'
 import { isAdmin } from '@/access/adminOnly'
-import { formatMonth, monthStartFromParts } from '@/lib/months'
+import { monthStartFromParts } from '@/lib/months'
 import { skippedCategoryIdsOf } from '@/lib/monthSummary'
 
 /**
@@ -239,10 +240,8 @@ export async function copyFeeAction(
 
 /**
  * Skips (or un-skips) a previous-month category on the copy panel by
- * recording it on the month's skippedCategories. overrideAccess: true
- * because Months' update access is adminOnly, but skipping is part of the
- * same copy workflow any logged-in user can do with copyFeeAction — and it
- * only ever touches this one field.
+ * recording it on the month's skippedCategories. Admin-only, like the rest
+ * of the copy panel — enforced by Months' update access.
  */
 export async function setCategorySkippedAction(
   monthId: number,
@@ -264,7 +263,8 @@ export async function setCategorySkippedAction(
     collection: 'months',
     id: monthId,
     data: { skippedCategories: skipped ? [...current, categoryId] : current },
-    overrideAccess: true,
+    user,
+    overrideAccess: false,
   })
 
   revalidatePath('/')
@@ -300,8 +300,6 @@ export type SaveFeeState = {
   error: string | null
   /** Set on success so the dialog knows to close; a timestamp so repeat saves still change it. */
   savedAt: number | null
-  month?: number
-  year?: number
 }
 
 /**
@@ -309,9 +307,9 @@ export type SaveFeeState = {
  * Problems come back as `error` for the dialog to show rather than throwing,
  * including guardAmountEdit's "already marked paid" refusal.
  *
- * Adding: the target month can be any month/year. If its Month row doesn't
- * exist yet, admins get it created on the fly; everyone else gets an error,
- * keeping month creation admin-only as on the dashboard.
+ * Admin-only (Fees' access rules enforce it; the early check just gives a
+ * readable message). Adding: the target month can be any month/year, and
+ * its Month row is created on the fly if it doesn't exist yet.
  *
  * Editing: only category and amount change. Moving a fee to another month
  * would leave its payments split across the old month's members, since
@@ -327,6 +325,10 @@ export async function saveFeeAction(
 
   if (!user) {
     redirect('/login')
+  }
+
+  if (!isAdmin(user)) {
+    return { error: 'Only admins can add or edit fees.', savedAt: null }
   }
 
   const feeId = Number(formData.get('feeId')) || null
@@ -378,7 +380,7 @@ export async function saveFeeAction(
     })
     if (docs[0]) {
       monthId = docs[0].id
-    } else if (isAdmin(user)) {
+    } else {
       const created = await payload.create({
         collection: 'months',
         data: { startsOn },
@@ -386,11 +388,6 @@ export async function saveFeeAction(
         overrideAccess: false,
       })
       monthId = created.id
-    } else {
-      return {
-        error: `${formatMonth(startsOn)} hasn’t been created yet. Ask an admin to create it.`,
-        savedAt: null,
-      }
     }
   }
 
@@ -432,5 +429,142 @@ export async function saveFeeAction(
   }
 
   revalidatePath('/')
-  return { error: null, savedAt: Date.now(), month, year }
+
+  // Show the fee where it landed. Outside any try/catch: redirect() throws.
+  const viewedMonth = Number(formData.get('viewedMonth'))
+  const viewedYear = Number(formData.get('viewedYear'))
+  if (!feeId && (month !== viewedMonth || year !== viewedYear)) {
+    redirect(`/?month=${month}&year=${year}`)
+  }
+
+  return { error: null, savedAt: Date.now() }
+}
+
+export type SaveUserState = {
+  error: string | null
+  /** Set on success so the dialog knows to close; a timestamp so repeat saves still change it. */
+  savedAt: number | null
+  /** Saved, but something worth telling the admin (e.g. the welcome email failed). */
+  notice?: string
+}
+
+const WELCOME_LINK_EXPIRATION_MS = 7 * 24 * 60 * 60 * 1000
+
+/** "2026-11-12" from a date input -> ISO at UTC midnight; blank -> null. */
+function dateInputToIso(value: FormDataEntryValue | null): string | null {
+  const text = String(value ?? '').trim()
+  if (!text) return null
+  const date = new Date(`${text}T00:00:00.000Z`)
+  return Number.isNaN(date.getTime()) ? null : date.toISOString()
+}
+
+/**
+ * Backs the Add/Edit user dialog on /users (useActionState, hence prevState).
+ * Admin-only — Users' access rules enforce it too.
+ *
+ * Adding: the account gets a random password nobody knows, then a welcome
+ * email with a set-password link (the same reset-password page and token
+ * mechanism as "Forgot your password?", but valid for a week). If sending
+ * fails the user still exists; the notice tells the admin to have them use
+ * "Forgot your password?" once email works.
+ *
+ * Editing: an admin can't remove their own admin role or disable their own
+ * login, so there's always at least one admin who can get back in.
+ */
+export async function saveUserAction(
+  _prev: SaveUserState,
+  formData: FormData,
+): Promise<SaveUserState> {
+  const payload = await getPayload({ config: await config })
+  const requestHeaders = await headers()
+  const { user } = await payload.auth({ headers: requestHeaders })
+
+  if (!user) {
+    redirect('/login')
+  }
+  if (!isAdmin(user)) {
+    return { error: 'Only admins can manage users.', savedAt: null }
+  }
+
+  const userId = Number(formData.get('userId')) || null
+  const name = String(formData.get('name') ?? '').trim()
+  const email = String(formData.get('email') ?? '').trim()
+  const makeAdmin = formData.get('admin') === 'on'
+  // New users can always log in; the checkbox only appears when editing.
+  const isActive = userId ? formData.get('isActive') === 'on' : true
+  const startDate = dateInputToIso(formData.get('startDate'))
+  const endDate = dateInputToIso(formData.get('endDate'))
+
+  if (!email) return { error: 'Enter an email address.', savedAt: null }
+  if (!startDate) return { error: 'Enter the date they joined the household.', savedAt: null }
+  if (endDate && endDate < startDate) {
+    return { error: 'The end date can’t be before the start date.', savedAt: null }
+  }
+  if (userId === user.id && (!makeAdmin || !isActive)) {
+    return {
+      error: 'You can’t remove your own admin access or disable your own login.',
+      savedAt: null,
+    }
+  }
+
+  const data = {
+    name,
+    email,
+    roles: (makeAdmin ? ['admin', 'member'] : ['member']) as ('admin' | 'member')[],
+    isActive,
+    startDate,
+    endDate,
+  }
+
+  try {
+    if (userId) {
+      await payload.update({ collection: 'users', id: userId, data, user, overrideAccess: false })
+    } else {
+      await payload.create({
+        collection: 'users',
+        data: { ...data, password: randomBytes(24).toString('hex') },
+        user,
+        overrideAccess: false,
+      })
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Could not save the user.'
+    return {
+      error: /email/i.test(message) ? 'That email address is already in use.' : message,
+      savedAt: null,
+    }
+  }
+
+  revalidatePath('/users')
+  revalidatePath('/')
+
+  if (userId) {
+    return { error: null, savedAt: Date.now() }
+  }
+
+  try {
+    const token = await payload.forgotPassword({
+      collection: 'users',
+      data: { email },
+      disableEmail: true,
+      expiration: WELCOME_LINK_EXPIRATION_MS,
+    })
+    const url = `${process.env.NEXT_PUBLIC_SERVER_URL || ''}/reset-password?token=${token}`
+    await payload.sendEmail({
+      to: email,
+      subject: 'You’ve been added to Expenses',
+      html: `<p>${user.name || user.email} added you to Expenses.</p>
+<p>Choose a password to log in: <a href="${url}">${url}</a></p>
+<p>This link expires in 7 days. After that, use “Forgot your password?” on the login page.</p>`,
+    })
+  } catch (error) {
+    payload.logger.error({ err: error, msg: 'welcome email failed' })
+    return {
+      error: null,
+      savedAt: Date.now(),
+      notice: `${email} was added, but the welcome email couldn’t be sent. Once email is working, they can use “Forgot your password?” on the login page.`,
+    }
+  }
+
+  return { error: null, savedAt: Date.now() }
 }

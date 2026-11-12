@@ -4,6 +4,7 @@ import { redirect } from 'next/navigation'
 import { getPayload } from 'payload'
 
 import config from '@/payload.config'
+import type { Payment } from '@/payload-types'
 import { isAdmin } from '@/access/adminOnly'
 import { formatMoney } from '@/lib/money'
 import { nextMonth, previousMonth } from '@/lib/months'
@@ -12,7 +13,8 @@ import { CopyFeeRow } from './_components/CopyFeeRow'
 import { DeleteFeeButton } from './_components/DeleteFeeButton'
 import { FeeDialog } from './_components/FeeDialog'
 import { PaymentLine } from './_components/PaymentLine'
-import { createMonthAction, logoutAction, setCategorySkippedAction } from './actions'
+import { AppHeader } from './_components/AppHeader'
+import { createMonthAction, setCategorySkippedAction } from './actions'
 
 /**
  * Parses the month and year from the search params, defaulting to the current month and year if not provided or invalid.
@@ -53,9 +55,15 @@ export default async function HomePage(props: {
   const summary = await getMonthSummary(payload, month, year)
   const prev = previousMonth(month, year)
   const next = nextMonth(month, year)
-  const copyCandidates = summary.monthDoc
-    ? await getCopyCandidates(payload, summary.monthDoc, month, year, summary.fees)
-    : null
+  // Members see the month and can mark their own payments; everything that
+  // changes fees or months is admin-only (enforced again by access rules).
+  const admin = isAdmin(user)
+  const canToggle = (payment: Payment) =>
+    admin || (typeof payment.user === 'object' ? payment.user.id : payment.user) === user.id
+  const copyCandidates =
+    admin && summary.monthDoc
+      ? await getCopyCandidates(payload, summary.monthDoc, month, year, summary.fees)
+      : null
   // Fees with any paid share can't be deleted (see deleteFeeAction).
   const feeIdsWithPaidShares = new Set(
     summary.users.flatMap((userSummary) => userSummary.paid.map((line) => line.fee.id)),
@@ -70,21 +78,7 @@ export default async function HomePage(props: {
 
   return (
     <div className="app">
-      <header className="app-header">
-        <div className="container">
-          <h1>Expenses</h1>
-          <div className="user-info">
-            <p>
-              Welcome, <strong>{user.name || user.email}</strong>!
-            </p>
-            <form action={logoutAction}>
-              <button type="submit" className="link-button">
-                Logout
-              </button>
-            </form>
-          </div>
-        </div>
-      </header>
+      <AppHeader user={user} />
 
       <main className="app-main">
         <div className="container">
@@ -98,22 +92,24 @@ export default async function HomePage(props: {
             </Link>
           </div>
 
-          <div className="month-toolbar">
-            {/* Keyed so the form's defaults follow the month being viewed. */}
-            <FeeDialog
-              key={`add-${month}-${year}`}
-              categories={categories}
-              month={month}
-              year={year}
-              triggerLabel="+ Add fee"
-              triggerClassName="btn-primary"
-            />
-          </div>
+          {admin && (
+            <div className="month-toolbar">
+              {/* Keyed so the form's defaults follow the month being viewed. */}
+              <FeeDialog
+                key={`add-${month}-${year}`}
+                categories={categories}
+                month={month}
+                year={year}
+                triggerLabel="+ Add fee"
+                triggerClassName="btn-primary"
+              />
+            </div>
+          )}
 
           {!summary.monthDoc ? (
             <div className="empty-state">
               <p>No fees recorded for {summary.monthLabel} yet.</p>
-              {isAdmin(user) && (
+              {admin && (
                 <form action={createMonthAction.bind(null, month, year)}>
                   <button type="submit" className="btn-primary">
                     Create {summary.monthLabel}
@@ -186,7 +182,7 @@ export default async function HomePage(props: {
                       <tr>
                         <th>Category</th>
                         <th className="amount">Total Amount</th>
-                        <th></th>
+                        {admin && <th></th>}
                       </tr>
                     </thead>
                     <tbody>
@@ -196,32 +192,34 @@ export default async function HomePage(props: {
                             <strong>{fee.category.name}</strong>
                           </td>
                           <td className="amount">{formatMoney(fee.amountCents)}</td>
-                          <td className="row-actions">
-                            {/* Keyed on the saved values so the form resets to them after an edit. */}
-                            <FeeDialog
-                              key={`edit-${fee.id}-${fee.category.id}-${fee.amountCents}`}
-                              categories={categories}
-                              month={month}
-                              year={year}
-                              fee={{
-                                id: fee.id,
-                                categoryId: fee.category.id,
-                                amountCents: fee.amountCents,
-                              }}
-                              triggerLabel="Edit"
-                              triggerClassName="btn-secondary btn-small"
-                            />
-                            {feeIdsWithPaidShares.has(fee.id) ? (
-                              <span
-                                className="muted"
-                                title="Mark its payments unpaid before deleting this fee."
-                              >
-                                Has payments
-                              </span>
-                            ) : (
-                              <DeleteFeeButton feeId={fee.id} categoryName={fee.category.name} />
-                            )}
-                          </td>
+                          {admin && (
+                            <td className="row-actions">
+                              {/* Keyed on the saved values so the form resets to them after an edit. */}
+                              <FeeDialog
+                                key={`edit-${fee.id}-${fee.category.id}-${fee.amountCents}`}
+                                categories={categories}
+                                month={month}
+                                year={year}
+                                fee={{
+                                  id: fee.id,
+                                  categoryId: fee.category.id,
+                                  amountCents: fee.amountCents,
+                                }}
+                                triggerLabel="Edit"
+                                triggerClassName="btn-secondary btn-small"
+                              />
+                              {feeIdsWithPaidShares.has(fee.id) ? (
+                                <span
+                                  className="muted"
+                                  title="Mark its payments unpaid before deleting this fee."
+                                >
+                                  Has payments
+                                </span>
+                              ) : (
+                                <DeleteFeeButton feeId={fee.id} categoryName={fee.category.name} />
+                              )}
+                            </td>
+                          )}
                         </tr>
                       ))}
                     </tbody>
@@ -233,7 +231,7 @@ export default async function HomePage(props: {
                         <td className="amount">
                           <strong>{formatMoney(summary.totalFeeCents)}</strong>
                         </td>
-                        <td></td>
+                        {admin && <td></td>}
                       </tr>
                     </tfoot>
                   </table>
@@ -268,7 +266,11 @@ export default async function HomePage(props: {
                         </thead>
                         <tbody>
                           {userSummary.unpaid.map((line) => (
-                            <PaymentLine key={line.payment.id} {...line} />
+                            <PaymentLine
+                              key={line.payment.id}
+                              {...line}
+                              canToggle={canToggle(line.payment)}
+                            />
                           ))}
                         </tbody>
                       </table>
@@ -288,7 +290,11 @@ export default async function HomePage(props: {
                         </thead>
                         <tbody>
                           {userSummary.paid.map((line) => (
-                            <PaymentLine key={line.payment.id} {...line} />
+                            <PaymentLine
+                              key={line.payment.id}
+                              {...line}
+                              canToggle={canToggle(line.payment)}
+                            />
                           ))}
                         </tbody>
                       </table>

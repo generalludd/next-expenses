@@ -1,6 +1,7 @@
 import type { CollectionConfig } from 'payload'
 
 import { authenticated } from '../../access/authenticated'
+import { adminOnly } from '../../access/adminOnly'
 import { cascadeDeletePayments } from './hooks/cascadeDeletePayments'
 import { fanOutPayments } from './hooks/fanOutPayments'
 import { guardAmountEdit } from './hooks/guardAmountEdit'
@@ -10,9 +11,9 @@ export const Fees: CollectionConfig = {
   slug: 'fees',
   access: {
     read: authenticated,
-    create: authenticated,
-    update: authenticated,
-    delete: authenticated,
+    create: adminOnly,
+    update: adminOnly,
+    delete: adminOnly,
   },
   admin: {
     useAsTitle: 'category',
@@ -42,7 +43,8 @@ export const Fees: CollectionConfig = {
       required: true,
       min: 0,
       admin: {
-        description: 'Whole cents, e.g. 10000 for $100.00. Stored as an integer to avoid float rounding drift.',
+        description:
+          'Whole cents, e.g. 10000 for $100.00. Stored as an integer to avoid float rounding drift.',
       },
     },
     {

@@ -1,6 +1,5 @@
 'use client'
 
-import { useRouter } from 'next/navigation'
 import { useActionState, useEffect, useRef } from 'react'
 
 import { fromCents } from '@/lib/money'
@@ -28,8 +27,8 @@ export type FeeDialogProps = {
 /**
  * Add/Edit fee form in a native <dialog>. Saving goes through saveFeeAction
  * via useActionState so validation errors show inside the dialog. On success
- * it closes, and if the fee went into a different month than the one being
- * viewed, navigates there so the new fee is visible.
+ * it closes. If a new fee went into a different month than the one being
+ * viewed, saveFeeAction redirects there itself (see viewedMonth below).
  */
 export function FeeDialog({
   categories,
@@ -41,16 +40,12 @@ export function FeeDialog({
 }: FeeDialogProps) {
   const dialogRef = useRef<HTMLDialogElement>(null)
   const formRef = useRef<HTMLFormElement>(null)
-  const router = useRouter()
   const [state, formAction, pending] = useActionState(saveFeeAction, initialState)
 
   useEffect(() => {
     if (!state.savedAt) return
     dialogRef.current?.close()
     if (!fee) formRef.current?.reset()
-    if (state.month && state.year && (state.month !== month || state.year !== year)) {
-      router.push(`/?month=${state.month}&year=${state.year}`)
-    }
     // Only react to a new successful save.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.savedAt])
@@ -71,6 +66,11 @@ export function FeeDialog({
           <h2>{title}</h2>
           {state.error && <p className="login-error">{state.error}</p>}
           {fee && <input type="hidden" name="feeId" value={fee.id} />}
+          {/* Lets the action redirect when the fee lands in another month. Done
+              server-side because a client router.push after the action raced
+              with Next's post-action refresh and was sometimes lost. */}
+          <input type="hidden" name="viewedMonth" value={month} />
+          <input type="hidden" name="viewedYear" value={year} />
 
           <div className="fee-form-row">
             <label>
