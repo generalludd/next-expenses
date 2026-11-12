@@ -10,6 +10,7 @@ import { nextMonth, previousMonth } from '@/lib/months'
 import { getCopyCandidates, getMonthSummary } from '@/lib/monthSummary'
 import { CopyFeeRow } from './_components/CopyFeeRow'
 import { DeleteFeeButton } from './_components/DeleteFeeButton'
+import { FeeDialog } from './_components/FeeDialog'
 import { PaymentLine } from './_components/PaymentLine'
 import { createMonthAction, logoutAction, setCategorySkippedAction } from './actions'
 
@@ -59,6 +60,13 @@ export default async function HomePage(props: {
   const feeIdsWithPaidShares = new Set(
     summary.users.flatMap((userSummary) => userSummary.paid.map((line) => line.fee.id)),
   )
+  const { docs: categoryDocs } = await payload.find({
+    collection: 'categories',
+    sort: 'name',
+    limit: 0,
+    depth: 0,
+  })
+  const categories = categoryDocs.map((category) => ({ id: category.id, name: category.name }))
 
   return (
     <div className="app">
@@ -88,6 +96,18 @@ export default async function HomePage(props: {
             <Link href={`/?month=${next.month}&year=${next.year}`} className="btn-nav">
               Next →
             </Link>
+          </div>
+
+          <div className="month-toolbar">
+            {/* Keyed so the form's defaults follow the month being viewed. */}
+            <FeeDialog
+              key={`add-${month}-${year}`}
+              categories={categories}
+              month={month}
+              year={year}
+              triggerLabel="+ Add fee"
+              triggerClassName="btn-primary"
+            />
           </div>
 
           {!summary.monthDoc ? (
@@ -177,6 +197,20 @@ export default async function HomePage(props: {
                           </td>
                           <td className="amount">{formatMoney(fee.amountCents)}</td>
                           <td className="row-actions">
+                            {/* Keyed on the saved values so the form resets to them after an edit. */}
+                            <FeeDialog
+                              key={`edit-${fee.id}-${fee.category.id}-${fee.amountCents}`}
+                              categories={categories}
+                              month={month}
+                              year={year}
+                              fee={{
+                                id: fee.id,
+                                categoryId: fee.category.id,
+                                amountCents: fee.amountCents,
+                              }}
+                              triggerLabel="Edit"
+                              triggerClassName="btn-secondary btn-small"
+                            />
                             {feeIdsWithPaidShares.has(fee.id) ? (
                               <span
                                 className="muted"

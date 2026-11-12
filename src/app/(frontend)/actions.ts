@@ -7,7 +7,8 @@ import { getPayload } from 'payload'
 
 import config from '@/payload.config'
 import { toCents } from '@/lib/money'
-import { monthStartFromParts } from '@/lib/months'
+import { isAdmin } from '@/access/adminOnly'
+import { formatMonth, monthStartFromParts } from '@/lib/months'
 import { skippedCategoryIdsOf } from '@/lib/monthSummary'
 
 /**
@@ -293,4 +294,143 @@ export async function deleteFeeAction(feeId: number): Promise<void> {
   await payload.delete({ collection: 'fees', id: feeId, user, overrideAccess: false })
 
   revalidatePath('/')
+}
+
+export type SaveFeeState = {
+  error: string | null
+  /** Set on success so the dialog knows to close; a timestamp so repeat saves still change it. */
+  savedAt: number | null
+  month?: number
+  year?: number
+}
+
+/**
+ * Backs the Add/Edit fee dialog (useActionState, hence the prevState arg).
+ * Problems come back as `error` for the dialog to show rather than throwing,
+ * including guardAmountEdit's "already marked paid" refusal.
+ *
+ * Adding: the target month can be any month/year. If its Month row doesn't
+ * exist yet, admins get it created on the fly; everyone else gets an error,
+ * keeping month creation admin-only as on the dashboard.
+ *
+ * Editing: only category and amount change. Moving a fee to another month
+ * would leave its payments split across the old month's members, since
+ * fanOutPayments only runs on create — delete and re-add instead.
+ */
+export async function saveFeeAction(
+  _prev: SaveFeeState,
+  formData: FormData,
+): Promise<SaveFeeState> {
+  const payload = await getPayload({ config: await config })
+  const requestHeaders = await headers()
+  const { user } = await payload.auth({ headers: requestHeaders })
+
+  if (!user) {
+    redirect('/login')
+  }
+
+  const feeId = Number(formData.get('feeId')) || null
+  const categoryId = Number(formData.get('category'))
+  if (!Number.isInteger(categoryId) || categoryId <= 0) {
+    return { error: 'Choose a category.', savedAt: null }
+  }
+
+  let amountCents: number
+  try {
+    amountCents = toCents(String(formData.get('amount') ?? ''))
+  } catch {
+    return { error: 'Enter an amount.', savedAt: null }
+  }
+  if (amountCents < 0) {
+    return { error: 'Amount can’t be negative.', savedAt: null }
+  }
+
+  let monthId: number
+  let month: number
+  let year: number
+
+  if (feeId) {
+    const fee = await payload.findByID({ collection: 'fees', id: feeId, depth: 1 })
+    if (typeof fee.month !== 'object') throw new Error('fee month not populated')
+    monthId = fee.month.id
+    const start = new Date(fee.month.startsOn)
+    month = start.getUTCMonth() + 1
+    year = start.getUTCFullYear()
+  } else {
+    month = Number(formData.get('month'))
+    year = Number(formData.get('year'))
+    if (
+      !Number.isInteger(month) ||
+      month < 1 ||
+      month > 12 ||
+      !Number.isInteger(year) ||
+      year < 2000 ||
+      year > 2100
+    ) {
+      return { error: 'Choose a valid month and year.', savedAt: null }
+    }
+    const startsOn = monthStartFromParts(month, year).toISOString()
+    const { docs } = await payload.find({
+      collection: 'months',
+      where: { startsOn: { equals: startsOn } },
+      limit: 1,
+      depth: 0,
+    })
+    if (docs[0]) {
+      monthId = docs[0].id
+    } else if (isAdmin(user)) {
+      const created = await payload.create({
+        collection: 'months',
+        data: { startsOn },
+        user,
+        overrideAccess: false,
+      })
+      monthId = created.id
+    } else {
+      return {
+        error: `${formatMonth(startsOn)} hasn’t been created yet. Ask an admin to create it.`,
+        savedAt: null,
+      }
+    }
+  }
+
+  // One fee per category per month — the dashboard and copy panel both assume it.
+  const { docs: clashes } = await payload.find({
+    collection: 'fees',
+    where: { and: [{ month: { equals: monthId } }, { category: { equals: categoryId } }] },
+    limit: 1,
+    depth: 1,
+  })
+  const clash = clashes.find((fee) => fee.id !== feeId)
+  if (clash) {
+    const name = typeof clash.category === 'object' ? clash.category.name : 'that category'
+    return { error: `This month already has a ${name} fee. Edit that one instead.`, savedAt: null }
+  }
+
+  try {
+    if (feeId) {
+      await payload.update({
+        collection: 'fees',
+        id: feeId,
+        data: { category: categoryId, amountCents },
+        user,
+        overrideAccess: false,
+      })
+    } else {
+      await payload.create({
+        collection: 'fees',
+        data: { month: monthId, category: categoryId, amountCents },
+        user,
+        overrideAccess: false,
+      })
+    }
+  } catch (error) {
+    return {
+      error: error instanceof Error ? error.message : 'Could not save the fee.',
+      savedAt: null,
+    }
+  }
+
+  revalidatePath('/')
+  return { error: null, savedAt: Date.now(), month, year }
 }

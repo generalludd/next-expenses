@@ -40,13 +40,17 @@ async function cleanupFrontendToggleFixtures() {
 
 const copyCategoryName = '__test__ Frontend Copy'
 const skipCategoryName = '__test__ Frontend Skip'
-const copyMonthStarts = ['2099-10-01T00:00:00.000Z', '2099-11-01T00:00:00.000Z']
+const addCategoryName = '__test__ Frontend Add'
+const septemberStart = '2099-09-01T00:00:00.000Z'
+const octoberStart = '2099-10-01T00:00:00.000Z'
+const novemberStart = '2099-11-01T00:00:00.000Z'
+const copyMonthStarts = [septemberStart, octoberStart, novemberStart]
 
 async function cleanupCopyMonthFixtures() {
   const payload = await getPayload({ config: await config })
   const { docs: categories } = await payload.find({
     collection: 'categories',
-    where: { name: { in: [copyCategoryName, skipCategoryName] } },
+    where: { name: { in: [copyCategoryName, skipCategoryName, addCategoryName] } },
     limit: 0,
     depth: 0,
   })
@@ -256,7 +260,7 @@ test.describe('Frontend', () => {
     try {
       const october = await payload.create({
         collection: 'months',
-        data: { startsOn: copyMonthStarts[0] },
+        data: { startsOn: octoberStart },
       })
       const category = await payload.create({
         collection: 'categories',
@@ -321,6 +325,58 @@ test.describe('Frontend', () => {
       await feeRow.getByRole('button', { name: 'Delete' }).click()
       await expect(feeRow).toHaveCount(0)
       await expect(copySection.locator('tr').filter({ hasText: copyCategoryName })).toBeVisible()
+    } finally {
+      await cleanupCopyMonthFixtures()
+    }
+  })
+
+  test('adds a fee to a new month through the dialog, then edits it', async ({ browser }) => {
+    await cleanupCopyMonthFixtures()
+    const payload = await getPayload({ config: await config })
+
+    try {
+      await payload.create({ collection: 'categories', data: { name: addCategoryName } })
+
+      const freshPage = await (await browser.newContext()).newPage()
+      await freshPage.goto('http://localhost:3000/login')
+      await freshPage.fill('input[name="email"]', frontendTestUser.email)
+      await freshPage.fill('input[name="password"]', frontendTestUser.password)
+      await freshPage.click('button[type="submit"]')
+      await expect(freshPage).toHaveURL('http://localhost:3000/')
+
+      // Add from the current month, targeting September 2099, which doesn't exist yet;
+      // the seeded user is an admin, so the month is created on the fly.
+      await freshPage.getByRole('button', { name: '+ Add fee' }).click()
+      const addDialog = freshPage.getByRole('dialog', { name: 'Add fee' })
+      await addDialog.locator('select[name="month"]').selectOption({ label: 'September' })
+      await addDialog.locator('input[name="year"]').fill('2099')
+      await addDialog.locator('select[name="category"]').selectOption({ label: addCategoryName })
+      await addDialog.locator('input[name="amount"]').fill('42.10')
+      await addDialog.getByRole('button', { name: 'Save' }).click()
+
+      await expect(freshPage).toHaveURL(/\?month=9&year=2099$/)
+      const feeRow = freshPage.locator('.fees-table tbody tr').filter({ hasText: addCategoryName })
+      await expect(feeRow).toContainText('$42.10')
+
+      // Adding the same category again is refused inside the dialog.
+      await freshPage.getByRole('button', { name: '+ Add fee' }).click()
+      const againDialog = freshPage.getByRole('dialog', { name: 'Add fee' })
+      await againDialog.locator('select[name="category"]').selectOption({ label: addCategoryName })
+      await againDialog.locator('input[name="amount"]').fill('1')
+      await againDialog.getByRole('button', { name: 'Save' }).click()
+      await expect(againDialog.locator('.login-error')).toContainText(
+        `already has a ${addCategoryName} fee`,
+      )
+      await againDialog.getByRole('button', { name: 'Cancel' }).click()
+
+      // Edit the amount.
+      await feeRow.getByRole('button', { name: 'Edit' }).click()
+      const editDialog = freshPage.getByRole('dialog', { name: 'Edit fee' })
+      await expect(editDialog.locator('input[name="amount"]')).toHaveValue('42.10')
+      await editDialog.locator('input[name="amount"]').fill('55.00')
+      await editDialog.getByRole('button', { name: 'Save' }).click()
+      await expect(editDialog).toBeHidden()
+      await expect(feeRow).toContainText('$55.00')
     } finally {
       await cleanupCopyMonthFixtures()
     }
