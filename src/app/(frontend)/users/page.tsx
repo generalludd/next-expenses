@@ -1,9 +1,7 @@
-import { headers as getHeaders } from 'next/headers.js'
 import { redirect } from 'next/navigation'
-import { getPayload } from 'payload'
 
-import config from '@/payload.config'
 import { isAdmin } from '@/access/adminOnly'
+import { requireUser } from '@/lib/requireUser'
 import { AppHeader } from '../_components/AppHeader'
 import { UserDialog } from '../_components/UserDialog'
 
@@ -20,14 +18,7 @@ function formatDate(iso: string | null | undefined): string {
 }
 
 export default async function UsersPage() {
-  const payloadConfig = await config
-  const payload = await getPayload({ config: payloadConfig })
-  const headers = await getHeaders()
-  const { user } = await payload.auth({ headers })
-
-  if (!user) {
-    redirect('/login')
-  }
+  const { payload, user } = await requireUser()
   if (!isAdmin(user)) {
     redirect('/')
   }

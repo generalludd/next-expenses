@@ -74,6 +74,18 @@ export const Users: CollectionConfig = {
       },
     },
     {
+      name: 'mustChangePassword',
+      type: 'checkbox',
+      defaultValue: false,
+      // Set by an admin alongside a temporary password; cleared by the user's
+      // own change on /change-password (which runs with overrideAccess).
+      access: { update: adminOnlyField },
+      admin: {
+        description:
+          'When on, the frontend sends this person to /change-password until they choose a new password.',
+      },
+    },
+    {
       name: 'startDate',
       type: 'date',
       required: true,

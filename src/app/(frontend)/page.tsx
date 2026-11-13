@@ -1,14 +1,11 @@
-import { headers as getHeaders } from 'next/headers.js'
 import Link from 'next/link'
-import { redirect } from 'next/navigation'
-import { getPayload } from 'payload'
 
-import config from '@/payload.config'
 import type { Payment } from '@/payload-types'
 import { isAdmin } from '@/access/adminOnly'
 import { formatMoney } from '@/lib/money'
 import { nextMonth, previousMonth } from '@/lib/months'
 import { getCopyCandidates, getMonthSummary } from '@/lib/monthSummary'
+import { requireUser } from '@/lib/requireUser'
 import { CopyFeeRow } from './_components/CopyFeeRow'
 import { DeleteFeeButton } from './_components/DeleteFeeButton'
 import { FeeDialog } from './_components/FeeDialog'
@@ -42,14 +39,7 @@ export default async function HomePage(props: {
   searchParams: Promise<{ month?: string; year?: string }>
 }) {
   const searchParams = await props.searchParams
-  const headers = await getHeaders()
-  const payloadConfig = await config
-  const payload = await getPayload({ config: payloadConfig })
-  const { user } = await payload.auth({ headers })
-
-  if (!user) {
-    redirect('/login')
-  }
+  const { payload, user } = await requireUser()
 
   const { month, year } = parseMonthYear(searchParams)
   const summary = await getMonthSummary(payload, month, year)

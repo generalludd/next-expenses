@@ -253,6 +253,60 @@ describe('Access rules', () => {
       expect(updated.roles).toContain('admin')
     })
 
+    it('gives a user with a pending password change access to nothing but their own record', async () => {
+      const pending = await payload.update({
+        collection: 'users',
+        id: member.id,
+        data: { mustChangePassword: true },
+      })
+      const asPending = { user: pending, overrideAccess: false } as const
+
+      try {
+        await expect(payload.find({ collection: 'fees', ...asPending })).rejects.toThrow()
+        await expect(payload.find({ collection: 'payments', ...asPending })).rejects.toThrow()
+        await expect(payload.find({ collection: 'months', ...asPending })).rejects.toThrow()
+        await expect(payload.find({ collection: 'categories', ...asPending })).rejects.toThrow()
+        const own = await paymentFor(member.id)
+        await expect(
+          payload.update({
+            collection: 'payments',
+            id: own.id,
+            data: { paidOn: null },
+            ...asPending,
+          }),
+        ).rejects.toThrow()
+
+        const { docs: visibleUsers } = await payload.find({ collection: 'users', ...asPending })
+        expect(visibleUsers.map((u) => u.id)).toEqual([member.id])
+        await expect(
+          payload.update({ collection: 'users', id: member.id, data: { name: 'x' }, ...asPending }),
+        ).rejects.toThrow()
+
+        // An admin with a pending change is locked out the same way.
+        const pendingAdmin = await payload.update({
+          collection: 'users',
+          id: admin.id,
+          data: { mustChangePassword: true },
+        })
+        await expect(
+          payload.find({ collection: 'users', user: pendingAdmin, overrideAccess: false }),
+        ).resolves.toMatchObject({ totalDocs: 1 })
+        await expect(
+          payload.update({
+            collection: 'users',
+            id: otherMember.id,
+            data: { name: 'x' },
+            user: pendingAdmin,
+            overrideAccess: false,
+          }),
+        ).rejects.toThrow()
+      } finally {
+        for (const id of [member.id, admin.id]) {
+          await payload.update({ collection: 'users', id, data: { mustChangePassword: false } })
+        }
+      }
+    })
+
     it('blocks login while isActive is off', async () => {
       await payload.update({ collection: 'users', id: member.id, data: { isActive: false } })
       await expect(

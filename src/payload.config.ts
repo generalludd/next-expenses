@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url'
 import sharp from 'sharp'
 
 import { Users } from './collections/Users'
+import { blockWhilePasswordChangePending, passwordChangePending } from './access/passwordChange'
 import { Media } from './collections/Media'
 import { Categories } from './collections/Categories'
 import { Months } from './collections/Months'
@@ -23,7 +24,10 @@ export default buildConfig({
       baseDir: path.resolve(dirname),
     },
   },
-  collections: [Users, Media, Categories, Months, Fees, Payments],
+  // Nobody with a pending password change gets access to anything (see passwordChange.ts).
+  collections: [Users, Media, Categories, Months, Fees, Payments].map(
+    blockWhilePasswordChangePending,
+  ),
   editor: lexicalEditor(),
   secret: process.env.PAYLOAD_SECRET || '',
   typescript: {
@@ -60,8 +64,8 @@ export default buildConfig({
   jobs: {
     access: {
       run: ({ req }: { req: PayloadRequest }): boolean => {
-        // Logged-in users may run jobs.
-        if (req.user) return true
+        // Logged-in users may run jobs, unless they still have to change their password.
+        if (req.user) return !passwordChangePending(req.user)
 
         // Otherwise require the cron secret as a bearer token.
         const secret = process.env.CRON_SECRET

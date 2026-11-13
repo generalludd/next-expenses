@@ -1,6 +1,6 @@
 'use server'
 
-import { cookies, headers } from 'next/headers'
+import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
 import { revalidatePath } from 'next/cache'
 import { randomBytes } from 'crypto'
@@ -11,6 +11,7 @@ import { toCents } from '@/lib/money'
 import { isAdmin } from '@/access/adminOnly'
 import { monthStartFromParts } from '@/lib/months'
 import { skippedCategoryIdsOf } from '@/lib/monthSummary'
+import { requireUser } from '@/lib/requireUser'
 
 /**
  * Logs in via the Local API and sets Payload's own session cookie by hand.
@@ -35,10 +36,12 @@ export async function loginAction(formData: FormData): Promise<void> {
 
   let token: string | undefined
   let exp: number | undefined
+  let mustChangePassword = false
   try {
     const result = await payload.login({ collection: 'users', data: { email, password } })
     token = result.token
     exp = result.exp
+    mustChangePassword = Boolean(result.user?.mustChangePassword)
   } catch {
     // Invalid credentials. Fall through to the redirect below — `redirect()`
     // throws internally, and calling it from inside this catch would catch
@@ -60,7 +63,83 @@ export async function loginAction(formData: FormData): Promise<void> {
     expires: exp ? new Date(exp * 1000) : undefined,
   })
 
-  redirect('/')
+  redirect(mustChangePassword ? '/change-password' : '/')
+}
+
+const MIN_PASSWORD_LENGTH = 8
+
+/** Error text for an unacceptable new password, or null if it's fine. */
+function newPasswordProblem(password: string, confirm: string): string | null {
+  if (password.length < MIN_PASSWORD_LENGTH) {
+    return `Use at least ${MIN_PASSWORD_LENGTH} characters.`
+  }
+  if (password !== confirm) return 'Passwords do not match.'
+  return null
+}
+
+export type ChangePasswordState = {
+  error: string | null
+  /** Set on success; a timestamp so repeat changes still re-render the notice. */
+  savedAt: number | null
+}
+
+/**
+ * Backs /change-password for any logged-in user.
+ *
+ * The current password is checked with payload.login (which also counts
+ * failed attempts toward the usual lockout). It's skipped when an admin has
+ * set a temporary password with mustChangePassword: the user typed it at
+ * login moments ago.
+ *
+ * The update passes the logged-in `user`, whose session id Payload keeps
+ * when the password changes (collections/operations/utilities/update.js),
+ * so this browser stays logged in while every other session — including the
+ * one payload.login just made to check the password — is dropped.
+ * overrideAccess because mustChangePassword is admin-only at field level;
+ * the id is always the caller's own.
+ */
+export async function changePasswordAction(
+  _prev: ChangePasswordState,
+  formData: FormData,
+): Promise<ChangePasswordState> {
+  const { payload, user } = await requireUser({ allowPendingPasswordChange: true })
+
+  const current = String(formData.get('current') ?? '')
+  const password = String(formData.get('password') ?? '')
+  const confirm = String(formData.get('confirm') ?? '')
+  const forced = Boolean(user.mustChangePassword)
+
+  const problem = newPasswordProblem(password, confirm)
+  if (problem) return { error: problem, savedAt: null }
+
+  if (!forced) {
+    let currentIsCorrect = false
+    try {
+      await payload.login({ collection: 'users', data: { email: user.email, password: current } })
+      currentIsCorrect = true
+    } catch {
+      // Wrong password, or locked out after too many tries.
+    }
+    if (!currentIsCorrect) {
+      return { error: 'Your current password is incorrect.', savedAt: null }
+    }
+  }
+
+  await payload.update({
+    collection: 'users',
+    id: user.id,
+    data: { password, mustChangePassword: false },
+    user,
+    overrideAccess: true,
+  })
+
+  revalidatePath('/', 'layout')
+
+  // A forced change was standing between them and the app; send them on.
+  if (forced) {
+    redirect('/')
+  }
+  return { error: null, savedAt: Date.now() }
 }
 
 /**
@@ -96,16 +175,30 @@ export async function resetPasswordAction(formData: FormData): Promise<void> {
   if (password !== confirm) {
     redirect(`/reset-password?token=${tokenParam}&error=mismatch`)
   }
+  if (password.length < MIN_PASSWORD_LENGTH) {
+    redirect(`/reset-password?token=${tokenParam}&error=short`)
+  }
 
   const payload = await getPayload({ config: await config })
 
   let succeeded = false
   try {
-    await payload.resetPassword({
+    const result = await payload.resetPassword({
       collection: 'users',
       data: { token, password },
       overrideAccess: true,
     })
+    // They chose this password themselves, so any admin-set
+    // "must change password" is satisfied.
+    const userId = result.user?.id as number | undefined
+    if (userId) {
+      await payload.update({
+        collection: 'users',
+        id: userId,
+        data: { mustChangePassword: false },
+        overrideAccess: true,
+      })
+    }
     succeeded = true
   } catch {
     // Invalid or expired token. Redirect outside the catch, as in loginAction.
@@ -134,13 +227,7 @@ export async function logoutAction(): Promise<void> {
 }
 
 export async function togglePaymentStatusAction(paymentId: number): Promise<void> {
-  const payload = await getPayload({ config: await config })
-  const requestHeaders = await headers()
-  const { user } = await payload.auth({ headers: requestHeaders })
-
-  if (!user) {
-    redirect('/login')
-  }
+  const { payload, user } = await requireUser()
 
   const payment = await payload.findByID({
     collection: 'payments',
@@ -166,13 +253,7 @@ export async function togglePaymentStatusAction(paymentId: number): Promise<void
  * enforced here even though the button is only rendered for admins.
  */
 export async function createMonthAction(month: number, year: number): Promise<void> {
-  const payload = await getPayload({ config: await config })
-  const requestHeaders = await headers()
-  const { user } = await payload.auth({ headers: requestHeaders })
-
-  if (!user) {
-    redirect('/login')
-  }
+  const { payload, user } = await requireUser()
 
   try {
     await payload.create({
@@ -204,13 +285,7 @@ export async function copyFeeAction(
   categoryId: number,
   formData: FormData,
 ): Promise<void> {
-  const payload = await getPayload({ config: await config })
-  const requestHeaders = await headers()
-  const { user } = await payload.auth({ headers: requestHeaders })
-
-  if (!user) {
-    redirect('/login')
-  }
+  const { payload, user } = await requireUser()
 
   let amountCents: number
   try {
@@ -248,13 +323,7 @@ export async function setCategorySkippedAction(
   categoryId: number,
   skipped: boolean,
 ): Promise<void> {
-  const payload = await getPayload({ config: await config })
-  const requestHeaders = await headers()
-  const { user } = await payload.auth({ headers: requestHeaders })
-
-  if (!user) {
-    redirect('/login')
-  }
+  const { payload, user } = await requireUser()
 
   const month = await payload.findByID({ collection: 'months', id: monthId, depth: 0 })
   const current = skippedCategoryIdsOf(month).filter((id) => id !== categoryId)
@@ -277,13 +346,7 @@ export async function setCategorySkippedAction(
  * hides the button in that case; this is the server-side backstop.
  */
 export async function deleteFeeAction(feeId: number): Promise<void> {
-  const payload = await getPayload({ config: await config })
-  const requestHeaders = await headers()
-  const { user } = await payload.auth({ headers: requestHeaders })
-
-  if (!user) {
-    redirect('/login')
-  }
+  const { payload, user } = await requireUser()
 
   const { totalDocs: paidCount } = await payload.count({
     collection: 'payments',
@@ -319,13 +382,7 @@ export async function saveFeeAction(
   _prev: SaveFeeState,
   formData: FormData,
 ): Promise<SaveFeeState> {
-  const payload = await getPayload({ config: await config })
-  const requestHeaders = await headers()
-  const { user } = await payload.auth({ headers: requestHeaders })
-
-  if (!user) {
-    redirect('/login')
-  }
+  const { payload, user } = await requireUser()
 
   if (!isAdmin(user)) {
     return { error: 'Only admins can add or edit fees.', savedAt: null }
@@ -469,19 +526,17 @@ function dateInputToIso(value: FormDataEntryValue | null): string | null {
  * "Forgot your password?" once email works.
  *
  * Editing: an admin can't remove their own admin role or disable their own
- * login, so there's always at least one admin who can get back in.
+ * login, so there's always at least one admin who can get back in. An
+ * optional new password replaces theirs and logs them out everywhere
+ * (Payload drops another user's sessions when their password changes);
+ * with "mustChangePassword" they're sent to /change-password at next login.
+ * Admins change their own password on /change-password instead.
  */
 export async function saveUserAction(
   _prev: SaveUserState,
   formData: FormData,
 ): Promise<SaveUserState> {
-  const payload = await getPayload({ config: await config })
-  const requestHeaders = await headers()
-  const { user } = await payload.auth({ headers: requestHeaders })
-
-  if (!user) {
-    redirect('/login')
-  }
+  const { payload, user } = await requireUser()
   if (!isAdmin(user)) {
     return { error: 'Only admins can manage users.', savedAt: null }
   }
@@ -494,6 +549,8 @@ export async function saveUserAction(
   const isActive = userId ? formData.get('isActive') === 'on' : true
   const startDate = dateInputToIso(formData.get('startDate'))
   const endDate = dateInputToIso(formData.get('endDate'))
+  const newPassword = userId && userId !== user.id ? String(formData.get('password') ?? '') : ''
+  const mustChangePassword = formData.get('mustChangePassword') === 'on'
 
   if (!email) return { error: 'Enter an email address.', savedAt: null }
   if (!startDate) return { error: 'Enter the date they joined the household.', savedAt: null }
@@ -507,6 +564,11 @@ export async function saveUserAction(
     }
   }
 
+  if (newPassword) {
+    const problem = newPasswordProblem(newPassword, String(formData.get('confirm') ?? ''))
+    if (problem) return { error: problem, savedAt: null }
+  }
+
   const data = {
     name,
     email,
@@ -514,6 +576,7 @@ export async function saveUserAction(
     isActive,
     startDate,
     endDate,
+    ...(newPassword ? { password: newPassword, mustChangePassword } : {}),
   }
 
   try {

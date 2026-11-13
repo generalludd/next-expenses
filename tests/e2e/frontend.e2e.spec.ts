@@ -568,6 +568,105 @@ test.describe('Frontend', () => {
     }
   })
 
+  test('an admin sets a temporary password, then the user changes their own', async ({
+    browser,
+  }) => {
+    await cleanupRolesFixtures()
+    const payload = await getPayload({ config: await config })
+    const originalPassword = 'original-password'
+    const temporaryPassword = 'temporary-password'
+    const chosenPassword = 'chosen-password'
+    const laterPassword = 'later-password'
+
+    try {
+      await payload.create({
+        collection: 'users',
+        data: {
+          email: addedUserEmail,
+          password: originalPassword,
+          name: 'Password Person',
+          roles: ['member'],
+          startDate: '2020-01-01',
+          endDate: null,
+        },
+      })
+      const earlierSession = await loginAs(browser, {
+        email: addedUserEmail,
+        password: originalPassword,
+      })
+      await expect(earlierSession).toHaveURL('http://localhost:3000/')
+
+      // The admin sets a temporary password; "ask them to change it" is on by default.
+      const adminPage = await loginAs(browser, frontendTestUser)
+      await expect(adminPage).toHaveURL('http://localhost:3000/')
+      await adminPage.goto('http://localhost:3000/users')
+      const row = adminPage.locator('.users-table tbody tr').filter({ hasText: addedUserEmail })
+      await row.getByRole('button', { name: 'Edit' }).click()
+      const editDialog = adminPage.getByRole('dialog', { name: 'Edit user' })
+      await expect(editDialog.locator('input[name="mustChangePassword"]')).toBeChecked()
+      await editDialog.locator('input[name="password"]').fill(temporaryPassword)
+      await editDialog.locator('input[name="confirm"]').fill('does-not-match')
+      await editDialog.getByRole('button', { name: 'Save' }).click()
+      await expect(editDialog.locator('.login-error')).toHaveText('Passwords do not match.')
+      await editDialog.locator('input[name="password"]').fill(temporaryPassword)
+      await editDialog.locator('input[name="confirm"]').fill(temporaryPassword)
+      await editDialog.getByRole('button', { name: 'Save' }).click()
+      await expect(editDialog).toBeHidden()
+
+      // That logged them out of the session they already had.
+      await earlierSession.goto('http://localhost:3000/')
+      await expect(earlierSession).toHaveURL(/\/login$/)
+
+      // Logging in with the temporary password leads straight to /change-password,
+      // and the app stays out of reach until they choose a new one.
+      const userPage = await loginAs(browser, {
+        email: addedUserEmail,
+        password: temporaryPassword,
+      })
+      await expect(userPage).toHaveURL(/\/change-password$/)
+      await expect(userPage.locator('.login-notice')).toContainText('set by an admin')
+      await expect(userPage.locator('input[name="current"]')).toHaveCount(0)
+      await userPage.goto('http://localhost:3000/')
+      await expect(userPage).toHaveURL(/\/change-password$/)
+      // The API refuses them too, with the same session cookie.
+      const feesResponse = await userPage.request.get('http://localhost:3000/api/fees')
+      expect(feesResponse.status()).toBe(403)
+      const usersResponse = await userPage.request.get('http://localhost:3000/api/users')
+      const usersBody = (await usersResponse.json()) as { docs: { email: string }[] }
+      expect(usersBody.docs.map((doc) => doc.email)).toEqual([addedUserEmail])
+      await userPage.goto('http://localhost:3000/change-password')
+      await userPage.fill('input[name="password"]', chosenPassword)
+      await userPage.fill('input[name="confirm"]', chosenPassword)
+      await userPage.click('button[type="submit"]')
+      await expect(userPage).toHaveURL('http://localhost:3000/')
+      expect((await userPage.request.get('http://localhost:3000/api/fees')).status()).toBe(200)
+
+      // Later, they change it themselves from the header link.
+      await userPage.getByRole('link', { name: 'Change password' }).click()
+      await expect(userPage).toHaveURL(/\/change-password$/)
+      await userPage.fill('input[name="current"]', 'wrong-password')
+      await userPage.fill('input[name="password"]', laterPassword)
+      await userPage.fill('input[name="confirm"]', laterPassword)
+      await userPage.click('button[type="submit"]')
+      await expect(userPage.locator('.login-error')).toHaveText(
+        'Your current password is incorrect.',
+      )
+      await userPage.fill('input[name="current"]', chosenPassword)
+      await userPage.fill('input[name="password"]', laterPassword)
+      await userPage.fill('input[name="confirm"]', laterPassword)
+      await userPage.click('button[type="submit"]')
+      await expect(userPage.locator('.login-notice')).toHaveText('Password updated.')
+
+      // Still logged in here, and the new password works elsewhere.
+      await userPage.goto('http://localhost:3000/')
+      await expect(userPage).toHaveURL('http://localhost:3000/')
+      const elsewhere = await loginAs(browser, { email: addedUserEmail, password: laterPassword })
+      await expect(elsewhere).toHaveURL('http://localhost:3000/')
+    } finally {
+      await cleanupRolesFixtures()
+    }
+  })
+
   // Kept last: it changes the seeded user's password.
   test('resets a forgotten password via the emailed link', async ({ browser }) => {
     const freshPage = await (await browser.newContext()).newPage()

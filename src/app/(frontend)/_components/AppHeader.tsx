@@ -23,6 +23,9 @@ export function AppHeader({ user }: { user: User }) {
               Users
             </Link>
           )}
+          <Link href="/change-password" className="link-button">
+            Change password
+          </Link>
           <form action={logoutAction}>
             <button type="submit" className="link-button">
               Logout

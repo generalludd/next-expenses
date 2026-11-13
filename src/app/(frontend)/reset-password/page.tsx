@@ -7,6 +7,7 @@ import { resetPasswordAction } from '../actions'
 
 const errorMessages: Record<string, string> = {
   mismatch: 'Passwords do not match.',
+  short: 'Use at least 8 characters.',
   invalid: 'This reset link is invalid or has expired.',
 }
 
@@ -46,7 +47,14 @@ export default async function ResetPasswordPage(props: {
         <input type="hidden" name="token" value={token} />
         <label>
           New password
-          <input type="password" name="password" autoComplete="new-password" required autoFocus />
+          <input
+            type="password"
+            name="password"
+            autoComplete="new-password"
+            minLength={8}
+            required
+            autoFocus
+          />
         </label>
         <label>
           Confirm new password

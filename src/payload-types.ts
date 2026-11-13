@@ -142,6 +142,10 @@ export interface User {
    */
   isActive?: boolean | null;
   /**
+   * When on, the frontend sends this person to /change-password until they choose a new password.
+   */
+  mustChangePassword?: boolean | null;
+  /**
    * Date this person joined the household. Fees for months before this are not split with them.
    */
   startDate: string;
@@ -359,6 +363,7 @@ export interface UsersSelect<T extends boolean = true> {
   name?: T;
   roles?: T;
   isActive?: T;
+  mustChangePassword?: T;
   startDate?: T;
   endDate?: T;
   updatedAt?: T;

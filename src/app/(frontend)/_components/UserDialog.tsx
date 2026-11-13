@@ -121,6 +121,34 @@ export function UserDialog({
             </>
           )}
 
+          {user && !isSelf && (
+            <fieldset className="password-fieldset">
+              <legend>Set a new password (optional)</legend>
+              <div className="fee-form-row">
+                <label>
+                  New password
+                  <input
+                    type="password"
+                    name="password"
+                    autoComplete="new-password"
+                    minLength={8}
+                  />
+                </label>
+                <label>
+                  Confirm
+                  <input type="password" name="confirm" autoComplete="new-password" />
+                </label>
+              </div>
+              <label className="checkbox-label">
+                <input type="checkbox" name="mustChangePassword" defaultChecked />
+                Ask them to choose their own password when they next log in
+              </label>
+              <p className="muted">
+                Leave blank to keep their current password. Setting one logs them out.
+              </p>
+            </fieldset>
+          )}
+
           {!user && (
             <p className="muted">They’ll get an email with a link to choose their password.</p>
           )}
